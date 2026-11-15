@@ -325,7 +325,8 @@ with tab_res:
 # ------------------------------------------------------------------ 4. clash & 3D
 with tab_clash:
     from ifc_checker.bcf import export_bcf
-    from ifc_checker.clash import (ClashTest, default_tests, fcl_available, run_clash, tests_from_records,
+    from ifc_checker.clash import (MODE_HELP, MODE_VN, MODES, default_matrix, default_tests,
+                                   fcl_available, load_matrix, run_clash, save_matrix, tests_from_records,
                                    tests_to_records)
     from ifc_checker.engine import CheckResult
 
@@ -335,28 +336,55 @@ with tab_clash:
     elif not models_ok:
         st.info("Tải file IFC ở tab 1 trước.")
     else:
-        st.caption("Mỗi phép thử so sánh nhóm A với nhóm B (lọc theo tên file + lớp IFC). Dung sai: bỏ qua va chạm có "
-                   "độ sâu xuyên nhỏ hơn giá trị này (m). Lưu ý: với bề mặt (địa hình, mặt đường) độ sâu chỉ mang tính "
-                   "tham khảo. Nên bỏ các cặp tiếp xúc theo thiết kế (vd hố ga × mặt đường) theo ma trận va chạm của BEP.")
-        sig = tuple(sorted(m.file_name for m in models_ok))
-        if ss.get("clash_sig") != sig:
-            ss.clash_tests = default_tests(models_ok)
-            ss.clash_sig = sig
-        tdf = st.data_editor(
-            pd.DataFrame(tests_to_records(ss.clash_tests), columns=[f for f in ClashTest.__dataclass_fields__]),
-            num_rows="dynamic", hide_index=True, width="stretch", key="clash_editor",
-            column_config={
-                "name": "Tên phép thử", "enabled": st.column_config.CheckboxColumn("Bật"),
-                "a_file": "Nhóm A - lọc tên file (regex)", "a_class": "Nhóm A - lớp IFC",
-                "b_file": "Nhóm B - lọc tên file (regex)", "b_class": "Nhóm B - lớp IFC",
-                "tolerance": st.column_config.NumberColumn("Dung sai (m)", min_value=0.0, step=0.01, format="%.3f"),
-                "max_results": st.column_config.NumberColumn("Tối đa", min_value=1, step=100),
-            })
-        b1, b2, b3 = st.columns([1.2, 1.2, 3])
-        if b2.button("Tạo lại phép thử theo từng cặp file"):
-            ss.clash_tests = default_tests(models_ok)
+        with st.expander("ℹ️ Cách định nghĩa va chạm (4 loại kiểm tra)", expanded=False):
+            st.markdown("\n".join(f"- **{k} – {MODE_VN[k]}**: {MODE_HELP[k]}" for k in MODES) +
+                        "\n\nNhóm A/B nhận diện theo **từ khoá tên** (tên đối tượng, tên đối tượng cha, thuộc tính Name; "
+                        "tự khớp cả dạng bị mất dấu khi xuất IFC, vd 'Mặt đường' ↔ 'Mt ng'), **lớp IFC** và **lọc tên "
+                        "file**. Ma trận mẫu theo nhóm A1…D2 của BEP hạ tầng; các giá trị khoảng cách/chiều sâu là "
+                        "giá trị mẫu - cần đối chiếu QCVN 07:2023, TCVN 7957 và hồ sơ thiết kế.")
+        if "clash_tests" not in ss:
+            ss.clash_tests = default_matrix()
+        b1, b2, b3, b4 = st.columns([1.3, 1.3, 1.6, 1.2])
+        if b1.button("📋 Ma trận va chạm mẫu (hạ tầng)"):
+            ss.clash_tests = default_matrix()
+            ss.pop("clash_editor", None)
             st.rerun()
-        if b1.button("▶ Chạy kiểm tra xung đột", type="primary"):
+        if b2.button("Theo từng cặp file"):
+            ss.clash_tests = default_tests(models_ok)
+            ss.pop("clash_editor", None)
+            st.rerun()
+        up_mx = b3.file_uploader("Mở ma trận (.xlsx)", type=["xlsx"], key="up_matrix", label_visibility="collapsed")
+        if up_mx is not None and ss.get("matrix_name") != (up_mx.name, up_mx.size):
+            try:
+                ss.clash_tests = load_matrix(_save_upload(up_mx))
+                ss.matrix_name = (up_mx.name, up_mx.size)
+                ss.pop("clash_editor", None)
+                st.rerun()
+            except Exception as ex:
+                st.error(f"Không đọc được ma trận: {ex}")
+        mxp = os.path.join(ss.tmpdir, "Ma_tran_va_cham.xlsx")
+        save_matrix(ss.clash_tests, mxp)
+        with open(mxp, "rb") as f:
+            b4.download_button("⬇ Tải ma trận (.xlsx)", f.read(), "Ma_tran_va_cham.xlsx")
+        cols = ["code", "enabled", "name", "mode", "tolerance", "a_name", "b_name", "a_file", "a_class", "b_file",
+                "b_class", "max_results", "note", "a_group", "b_group"]
+        tdf = st.data_editor(
+            pd.DataFrame(tests_to_records(ss.clash_tests), columns=cols),
+            num_rows="dynamic", hide_index=True, width="stretch", key="clash_editor",
+            column_order=cols[:13],
+            column_config={
+                "code": "Mã ô", "name": "Tên phép thử", "enabled": st.column_config.CheckboxColumn("Bật"),
+                "mode": st.column_config.SelectboxColumn("Loại kiểm tra", options=MODES, required=True,
+                                                         help="HARD va chạm cứng · CLEARANCE khoảng cách tối thiểu · "
+                                                              "FLUSH cao độ khớp mặt · COVER chiều sâu chôn tối thiểu"),
+                "tolerance": st.column_config.NumberColumn("Giá trị (m)", min_value=0.0, step=0.01, format="%.3f"),
+                "a_name": "A - từ khoá tên", "b_name": "B - từ khoá tên",
+                "a_file": "A - lọc tên file", "a_class": "A - lớp IFC",
+                "b_file": "B - lọc tên file", "b_class": "B - lớp IFC",
+                "max_results": st.column_config.NumberColumn("Tối đa", min_value=1, step=100),
+                "note": st.column_config.TextColumn("Định nghĩa va chạm / căn cứ", width="large"),
+            })
+        if st.button("▶ Chạy kiểm tra xung đột", type="primary"):
             tests = tests_from_records(tdf.to_dict("records"))
             ss.clash_tests = tests
             bar = st.progress(0.0, text="Đang chuẩn bị...")
@@ -374,22 +402,23 @@ with tab_clash:
             m1, m2, m3 = st.columns(3)
             m1.metric("Tổng xung đột", f"{len(cl):,}")
             m2.metric("Phép thử có xung đột", len({c.test for c in cl}))
-            m3.metric("Độ sâu lớn nhất (m)", f"{max((c.depth for c in cl), default=0):.3f}")
-            with st.expander("Nhật ký chạy"):
+            m3.metric("Phép thử đã chạy", sum(1 for t in run.tests if t.enabled))
+            with st.expander("Nhật ký chạy (số va chạm theo từng phép thử)"):
                 st.text("\n".join(run.messages))
             if cl:
-                cdf = pd.DataFrame([{"Mã": c.id, "Phép thử": c.test, "Độ sâu (m)": c.depth, "Lớp A": c.class_a,
+                cdf = pd.DataFrame([{"Mã": c.id, "Phép thử": c.test, "Loại": MODE_VN.get(c.kind, c.kind),
+                                     "Mô tả": c.detail, "Giá trị đo (m)": c.depth, "Lớp A": c.class_a,
                                      "Tên A": c.name_a, "Lớp B": c.class_b, "Tên B": c.name_b,
                                      "X": c.x, "Y": c.y, "Z": c.z, "File A": c.file_a, "File B": c.file_b}
                                     for c in cl])
                 fc1, fc2 = st.columns([2, 1])
                 sel_t = fc1.multiselect("Lọc phép thử", sorted(cdf["Phép thử"].unique()))
-                min_d = fc2.number_input("Độ sâu tối thiểu (m)", min_value=0.0, value=0.0, step=0.05)
+                sel_k = fc2.multiselect("Lọc loại kiểm tra", sorted(cdf["Loại"].unique()))
                 cview = cdf
                 if sel_t:
                     cview = cview[cview["Phép thử"].isin(sel_t)]
-                if min_d:
-                    cview = cview[cview["Độ sâu (m)"] >= min_d]
+                if sel_k:
+                    cview = cview[cview["Loại"].isin(sel_k)]
                 show3d_c = st.toggle("🧊 Hiện mô hình 3D bên cạnh", value=True, key="show3d_clash")
                 lc, rc = st.columns([1.1, 1]) if show3d_c else (st.container(), None)
                 with lc:

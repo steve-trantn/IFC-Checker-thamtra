@@ -158,11 +158,14 @@ def export_excel(res: CheckResult, path: str) -> None:
         for c_ in ws[1]:
             c_.fill, c_.font = hdr_fill, hdr_font
         start = ws.max_row + 2
-        headers = ["Mã", "Phép thử", "Trạng thái", "Độ sâu xuyên (m)", "File A", "Lớp A", "Tên A", "GlobalId A",
-                   "File B", "Lớp B", "Tên B", "GlobalId B", "X", "Y", "Z", "Ghi chú"]
-        rows = [(c.id, c.test, c.status, c.depth, c.file_a, c.class_a, c.name_a, c.guid_a, c.file_b, c.class_b,
-                 c.name_b, c.guid_b, c.x, c.y, c.z, c.note) for c in res.clashes]
-        table(ws, headers, rows, [9, 34, 10, 12, 30, 22, 30, 24, 30, 22, 30, 24, 13, 13, 9, 30], start_row=start)
+        from .clash import MODE_VN
+        headers = ["Mã", "Phép thử", "Loại kiểm tra", "Mô tả", "Giá trị đo (m)", "Trạng thái", "File A", "Lớp A",
+                   "Tên A", "GlobalId A", "File B", "Lớp B", "Tên B", "GlobalId B", "X", "Y", "Z",
+                   "Định nghĩa va chạm / căn cứ"]
+        rows = [(c.id, c.test, MODE_VN.get(getattr(c, "kind", "HARD"), ""), getattr(c, "detail", ""), c.depth,
+                 c.status, c.file_a, c.class_a, c.name_a, c.guid_a, c.file_b, c.class_b, c.name_b, c.guid_b,
+                 c.x, c.y, c.z, c.note) for c in res.clashes]
+        table(ws, headers, rows, [9, 34, 18, 44, 11, 9, 30, 22, 30, 24, 30, 22, 30, 24, 13, 13, 9, 60], start_row=start)
         if res.clash_messages:
             wl = wb.create_sheet("Nhật ký xung đột")
             wl.column_dimensions["A"].width = 120
@@ -225,11 +228,11 @@ def export_html(res: CheckResult, path: str, max_issues: int = 20000) -> None:
     clash_html = ""
     if res.clashes:
         crow = "".join(
-            f"<tr><td>{e(c.id)}</td><td>{e(c.test)}</td><td class=n>{c.depth:.3f}</td><td>{e(c.class_a)}<br><small>{e(c.name_a)}</small></td>"
+            f"<tr><td>{e(c.id)}</td><td>{e(c.test)}</td><td>{e(getattr(c, 'detail', '') or f'{c.depth:.3f} m')}</td><td>{e(c.class_a)}<br><small>{e(c.name_a)}</small></td>"
             f"<td>{e(c.class_b)}<br><small>{e(c.name_b)}</small></td><td class=n>{c.x:.2f}, {c.y:.2f}, {c.z:.2f}</td></tr>"
             for c in res.clashes[:5000])
         clash_html = (f"<section><h2>Xung đột ({len(res.clashes):,})</h2><div class=tbl><table><tr><th>Mã</th><th>Phép thử</th>"
-                      f"<th>Độ sâu (m)</th><th>Đối tượng A</th><th>Đối tượng B</th><th>Vị trí X, Y, Z</th></tr>{crow}"
+                      f"<th>Mô tả</th><th>Đối tượng A</th><th>Đối tượng B</th><th>Vị trí X, Y, Z</th></tr>{crow}"
                       "</table></div></section>")
     ai = (f"<section><h2>Nhận xét (AI hỗ trợ — cần chuyên gia xác nhận)</h2><div class=ai>{e(res.ai_summary)}</div></section>"
           if res.ai_summary else "")

@@ -107,7 +107,7 @@ def build_scene(models: list[ModelInfo], result=None, clash_run=None, progress=N
             b = obj_index.get((c.file_b, c.step_b))
             p = np.array([c.x, c.y, c.z]) - origin
             clashes.append({"id": c.id, "a": a, "b": b, "p": [round(float(x), 3) for x in p], "d": c.depth,
-                            "t": c.test})
+                            "t": c.test, "m": getattr(c, "detail", ""), "k": getattr(c, "kind", "HARD")})
 
     pos = np.concatenate(pos_parts) if pos_parts else np.zeros(0, np.float32)
     idx = np.concatenate(idx_parts) if idx_parts else np.zeros(0, np.uint32)

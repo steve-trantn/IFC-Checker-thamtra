@@ -380,7 +380,7 @@
       const o = this.meta.objects;
       const name = (i) => (i == null ? "?" : `${esc(this.meta.classes[o[i][3]])} - ${esc(o[i][4])}<br><small>${esc(this.meta.files[o[i][0]])}</small>`);
       this.info.innerHTML = `<b>Xung đột ${esc(c.id)}</b> <span class="ttv-x">✕</span><div class="ttv-k">${esc(c.t)}</div>` +
-        `<div>Độ sâu xuyên: <b>${c.d.toFixed(3)} m</b></div><hr><div><i class="ttv-sw" style="background:#d91fbf"></i>A: ${name(c.a)}</div>` +
+        `<div><b>${esc(c.m || ("Độ sâu xuyên " + c.d.toFixed(3) + " m"))}</b></div><hr><div><i class="ttv-sw" style="background:#d91fbf"></i>A: ${name(c.a)}</div>` +
         `<hr><div><i class="ttv-sw" style="background:#1f80f2"></i>B: ${name(c.b)}</div>`;
       this.info.style.display = "block";
       this.info.querySelector(".ttv-x").onclick = () => (this.info.style.display = "none");

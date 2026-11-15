@@ -47,9 +47,12 @@ def export_bcf(clashes, path: str, author: str = "", project_name: str = "Thẩm
             tg, vg = str(uuid.uuid4()), str(uuid.uuid4())
             files = "".join(f'<File IsExternal="true"><Filename>{escape(f)}</Filename></File>'
                             for f in sorted({c.file_a, c.file_b}))
-            desc = (f"Phép thử: {c.test}\nA: {c.class_a} - {c.name_a} ({c.file_a}) GUID {c.guid_a}\n"
+            measure = getattr(c, "detail", "") or f"Độ sâu xuyên {c.depth:.3f} m"
+            desc = (f"Phép thử: {c.test}\n{measure}\n"
+                    f"A: {c.class_a} - {c.name_a} ({c.file_a}) GUID {c.guid_a}\n"
                     f"B: {c.class_b} - {c.name_b} ({c.file_b}) GUID {c.guid_b}\n"
-                    f"Độ sâu xuyên: {c.depth:.3f} m · Vị trí: X={c.x:.3f} Y={c.y:.3f} Z={c.z:.3f}")
+                    f"Vị trí: X={c.x:.3f} Y={c.y:.3f} Z={c.z:.3f}"
+                    + (f"\nĐịnh nghĩa: {c.note}" if c.note else ""))
             markup = (
                 '<?xml version="1.0" encoding="UTF-8"?>\n<Markup>'
                 f'<Header>{files}</Header>'
