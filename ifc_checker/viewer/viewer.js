@@ -12,7 +12,7 @@
     [0.4, 0.68, 0.73], [0.73, 0.65, 0.29], [0.55, 0.45, 0.35], [0.45, 0.5, 0.62], [0.7, 0.3, 0.3],
     [0.3, 0.55, 0.55], [0.6, 0.6, 0.35],
   ];
-  const STATUS = { 2: [0.86, 0.24, 0.24], 1: [0.93, 0.64, 0.16], 0: [0.55, 0.72, 0.6], "-1": [0.74, 0.76, 0.8] };
+  const STATUS = { 2: [0.86, 0.24, 0.24], 1: [0.93, 0.64, 0.16], 0: [0.36, 0.66, 0.45], "-1": [0.6, 0.64, 0.7] };
   const STATUS_TXT = { 2: "Lỗi", 1: "Cảnh báo", 0: "Đạt", "-1": "Không kiểm tra" };
   const SEL = [0.1, 0.45, 1.0];
 
@@ -38,6 +38,10 @@
       this.selected = [];
       this.activeClash = null;
       this.isolateSet = null;
+      // LOD động theo kích thước trên màn hình (điểm ảnh)
+      this.lod = true;
+      this.lodHidePx = 1.5;     // nhỏ hơn -> ẩn
+      this.lodProxyPx = 12;     // nhỏ hơn -> vẽ khối hộp đơn giản
       this._buildDom();
       this._initThree();
     }
@@ -57,13 +61,15 @@
         '<label><input type="checkbox" data-k="hideOk"> Ẩn đối tượng đạt</label>' +
         '<label><input type="checkbox" data-k="isolate" checked> Làm mờ phần còn lại</label>' +
         '<label><input type="checkbox" data-k="clash" checked> Điểm xung đột</label>' +
+        '<label title="Xem xa: đối tượng nhỏ trên màn hình được vẽ đơn giản hoá / tạm ẩn; zoom gần hiện đầy đủ chi tiết"><input type="checkbox" data-k="lod" checked> LOD tự động</label>' +
         '<button data-k="fit" title="Xem toàn cảnh">⤢ Toàn cảnh</button>';
       c.appendChild(bar);
-      bar.querySelector('[data-k="mode"]').onchange = (e) => { this.colorMode = e.target.value; this._recolor(); this._legend(); };
+      bar.querySelector('[data-k="mode"]').onchange = (e) => { this._userColorMode = true; this.colorMode = e.target.value; this._recolor(); this._legend(); };
       bar.querySelector('[data-k="hideOk"]').onchange = (e) => { this.hideOk = e.target.checked; this._rebuildIndex(); };
       bar.querySelector('[data-k="isolate"]').onchange = (e) => { this.isolate = e.target.checked; this._applyIsolate(); };
       bar.querySelector('[data-k="clash"]').onchange = (e) => { this.showClash = e.target.checked; if (this.clashMesh) this.clashMesh.visible = this.showClash; this._render(); };
       bar.querySelector('[data-k="fit"]').onclick = () => this.fitAll();
+      bar.querySelector('[data-k="lod"]').onchange = (e) => { this.lod = e.target.checked; this._rebuildIndex(); };
       this.info = el("div", { class: "ttv-info" });
       this.info.style.display = "none";
       c.appendChild(this.info);
@@ -115,7 +121,17 @@
         this.camera.lookAt(this.target);
         this.camLight.position.copy(this.camera.position);
         this.renderer.render(this.scene, this.camera);
+        if (this.meta) {
+          clearTimeout(this._lodT);
+          this._lodT = setTimeout(() => { if (this._camSig() !== this._lodSig) this._rebuildIndex(); }, 160);
+        }
       });
+    }
+
+    _camSig() {
+      const p = this.camera.position, t = this.target;
+      const q = (v) => Math.round(v * 20) / 20;
+      return [p.x, p.y, p.z, t.x, t.y, t.z].map(q).join(",") + "|" + this.canvasWrap.clientWidth + "x" + this.canvasWrap.clientHeight;
     }
 
     _controls() {
@@ -208,6 +224,25 @@
         }
       });
       this.isolateSet = null;
+      // tâm & bán kính bao của từng đối tượng (cho LOD và loại bỏ ngoài khung nhìn)
+      const n0 = meta.objects.length;
+      this.centers = new Float32Array(n0 * 3);
+      this.radii = new Float32Array(n0);
+      meta.objects.forEach((o, i) => {
+        const b = o[10];
+        this.centers[i * 3] = (b[0] + b[3]) / 2; this.centers[i * 3 + 1] = (b[1] + b[4]) / 2; this.centers[i * 3 + 2] = (b[2] + b[5]) / 2;
+        this.radii[i] = Math.max(0.01, Math.hypot(b[3] - b[0], b[4] - b[1], b[5] - b[2]) / 2);
+      });
+      if (this.proxyMesh) { this.scene.remove(this.proxyMesh); this.proxyMesh.geometry.dispose(); }
+      this.proxyMat = new T.MeshPhongMaterial({ flatShading: true, shininess: 8 });
+      this.proxyMesh = new T.InstancedMesh(new T.BoxGeometry(1, 1, 1), this.proxyMat, Math.max(1, n0));
+      this.proxyMesh.setColorAt(0, new T.Color(1, 1, 1));
+      this.proxyMesh.count = 0;
+      this.proxyMesh.frustumCulled = false;
+      this.scene.add(this.proxyMesh);
+      this.proxyIds = new Uint32Array(0);
+      // chưa có kết quả kiểm tra -> tô màu theo file cho dễ phân biệt
+      if (!this._userColorMode) this.setColorMode(meta.objects.some((o) => o[5] >= 0) ? "status" : "file");
       this._recolor();
       this._rebuildIndex();
       this._buildClashMarkers();
@@ -215,8 +250,9 @@
       this.fitAll();
       this._legend();
       const n = meta.objects.length;
-      this.status.textContent = `${n.toLocaleString()} đối tượng · ${meta.ntris.toLocaleString()} tam giác` +
+      this.baseStatus = `${n.toLocaleString()} đối tượng · ${meta.ntris.toLocaleString()} tam giác` +
         (meta.clashes.length ? ` · ${meta.clashes.length.toLocaleString()} xung đột` : "");
+      this._updateStatus();
     }
 
     _computeBounds() {
@@ -253,20 +289,71 @@
         for (let k = v0 * 3, e = (v0 + vn) * 3; k < e; k += 3) { col[k] = c[0]; col[k + 1] = c[1]; col[k + 2] = c[2]; }
       });
       this.geom.getAttribute("color").needsUpdate = true;
+      this._proxyColors();
       this._render();
+    }
+
+    _proxyColors() {
+      if (!this.proxyMesh || !this.proxyIds.length) return;
+      const col = this.colors, c = new T.Color();
+      for (let k = 0; k < this.proxyIds.length; k++) {
+        const v = this.meta.objects[this.proxyIds[k]][6] * 3;
+        this.proxyMesh.setColorAt(k, c.setRGB(col[v], col[v + 1], col[v + 2]));
+      }
+      if (this.proxyMesh.instanceColor) this.proxyMesh.instanceColor.needsUpdate = true;
+    }
+
+    _updateStatus() {
+      if (!this.baseStatus) return;
+      const L = this.lodStats;
+      this.status.textContent = this.baseStatus + (this.lod && L
+        ? ` · đang vẽ ${L.tris.toLocaleString()} tam giác (${L.full.toLocaleString()} chi tiết, ${L.proxy.toLocaleString()} giản lược, ${(L.hidden + L.culled).toLocaleString()} ẩn)`
+        : "");
     }
 
     _rebuildIndex() {
       if (!this.meta) return;
       const objs = this.meta.objects, full = this.fullIndex;
-      const keep = [];
-      let total = 0;
+      const keep = [], proxies = [];
+      let total = 0, hidden = 0, culled = 0;
       const sel = new Set(this.selected);
+      const cam = this.camera;
+      cam.lookAt(this.target);
+      cam.updateMatrixWorld();
+      const fr = new T.Frustum().setFromProjectionMatrix(new T.Matrix4().multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse));
+      const k = (this.canvasWrap.clientHeight || 600) / 2 / Math.tan((cam.fov * Math.PI) / 360);
+      const cp = cam.position, sph = new T.Sphere(), C = this.centers, R = this.radii;
+      const useLod = this.lod && C;
       objs.forEach((o, i) => {
         if (this.isolateSet && !this.isolateSet.has(i)) return;
         if (this.hideOk && o[5] <= 0 && !sel.has(i)) return;
+        if (useLod && !sel.has(i)) {
+          const dx = C[i * 3] - cp.x, dy = C[i * 3 + 1] - cp.y, dz = C[i * 3 + 2] - cp.z;
+          const d = Math.max(1e-3, Math.sqrt(dx * dx + dy * dy + dz * dz));
+          sph.center.set(C[i * 3], C[i * 3 + 1], C[i * 3 + 2]);
+          sph.radius = R[i] + d * 0.35;               // nới rộng để không "hụt" mép khi xoay/kéo
+          if (!fr.intersectsSphere(sph)) { culled++; return; }
+          const px = (R[i] / d) * k;                  // bán kính trên màn hình (điểm ảnh)
+          if (px < this.lodHidePx) { hidden++; return; }
+          if (px < this.lodProxyPx && o[9] > 12) { proxies.push(i); return; }
+        }
         keep.push(i); total += o[9];
       });
+      this._lodSig = this._camSig();
+      // khối hộp đơn giản cho đối tượng nhỏ trên màn hình
+      const m4 = new T.Matrix4(), q = new T.Quaternion(), sc = new T.Vector3(), pos = new T.Vector3();
+      this.proxyIds = Uint32Array.from(proxies);
+      proxies.forEach((i, j) => {
+        const b = objs[i][10];
+        sc.set(Math.max(0.05, b[3] - b[0]), Math.max(0.05, b[4] - b[1]), Math.max(0.05, b[5] - b[2]));
+        pos.set((b[0] + b[3]) / 2, (b[1] + b[4]) / 2, (b[2] + b[5]) / 2);
+        this.proxyMesh.setMatrixAt(j, m4.compose(pos, q, sc));
+      });
+      this.proxyMesh.count = proxies.length;
+      this.proxyMesh.instanceMatrix.needsUpdate = true;
+      this._proxyColors();
+      this.lodStats = { full: keep.length, proxy: proxies.length, hidden, culled, tris: total + proxies.length * 12 };
+      this._updateStatus();
       const idx = new Uint32Array(total * 3);
       const triObj = new Uint32Array(total);
       let p = 0, t = 0;
@@ -333,7 +420,7 @@
       const size = Math.max(box.getSize(new T.Vector3()).length(), 1);
       const dir = this.camera.position.clone().sub(this.target).normalize();
       if (!isFinite(dir.x) || dir.lengthSq() < 0.5) dir.set(0.6, -0.6, 0.5).normalize();
-      const dist = (size * 0.75) / Math.tan((this.camera.fov * Math.PI) / 360);
+      const dist = (size * 0.55) / Math.tan((this.camera.fov * Math.PI) / 360);
       this.target.copy(center);
       this.camera.position.copy(center).add(dir.multiplyScalar(dist));
       this._render();
@@ -470,6 +557,7 @@
       const on = this.isolate && this.selected.length > 0;
       this.mat.transparent = on;
       this.mat.opacity = on ? 0.18 : 1;
+      if (this.proxyMat) { this.proxyMat.transparent = on; this.proxyMat.opacity = on ? 0.18 : 1; this.proxyMat.depthWrite = !on; this.proxyMat.needsUpdate = true; }
       this.mat.depthWrite = !on;
       this.mat.needsUpdate = true;
       this._render();
@@ -495,7 +583,8 @@
       const ndc = new T.Vector2(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
       const rc = new T.Raycaster();
       rc.setFromCamera(ndc, this.camera);
-      const hits = rc.intersectObject(this.mesh, false);
+      const targets = this.proxyMesh && this.proxyMesh.count ? [this.mesh, this.proxyMesh] : [this.mesh];
+      const hits = rc.intersectObjects(targets, false);
       if (!hits.length) { if (!setPivot) this.focus([], { silent: true }); return; }
       const h = hits[0];
       if (setPivot) {
@@ -505,7 +594,7 @@
         this._render();
         return;
       }
-      const oi = this.triObj[h.faceIndex];
+      const oi = h.object === this.proxyMesh ? this.proxyIds[h.instanceId] : this.triObj[h.faceIndex];
       this.selected = [oi];
       this.activeClash = null;
       if (this.activeMarker) this.activeMarker.visible = false;
