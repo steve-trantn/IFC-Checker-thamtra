@@ -21,3 +21,7 @@ venv/
 
 # Đệm trình xem 3D (bản web)
 ifc_checker/viewer/_cache/
+
+# Cấu hình bí mật & nhật ký truy cập
+config.env
+logs/

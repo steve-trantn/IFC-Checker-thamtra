@@ -18,6 +18,7 @@ async function api(path, opts = {}) {
   const o = Object.assign({ headers: {} }, opts);
   if (o.json !== undefined) { o.body = JSON.stringify(o.json); o.headers["Content-Type"] = "application/json"; }
   const r = await fetch(path, o);
+  if (r.status === 401) { location.href = "/login"; throw new Error("Cần đăng nhập"); }
   if (!r.ok) {
     let msg = r.statusText;
     try { const j = await r.json(); msg = j.detail || msg; } catch (e) { /* */ }
@@ -128,6 +129,8 @@ async function refreshState() {
   S.state = await api("/api/state");
   const st = S.state;
   $("#credit").textContent = `Phát triển bởi ${st.app.author} · ĐT: ${st.app.phone} · v${st.app.version}`;
+  const u = st.user;
+  $("#userbox").innerHTML = u ? `${u.picture ? `<img src="${esc(u.picture)}" alt="" referrerpolicy="no-referrer">` : ""}<span title="${esc(u.email)}">${esc(u.name || u.email)}</span><a href="/auth/logout">Đăng xuất</a>` : "";
   $("#docname").textContent = st.models.length ? st.models.map((m) => m.file).join(" · ") : "Chưa mở mô hình";
   $("#start").classList.toggle("hidden", st.models.length > 0);
   const r = st.result;

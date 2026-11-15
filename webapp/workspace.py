@@ -50,7 +50,9 @@ class Workspace:
         self.ai_model = "claude-opus-5-5"
         self.ai_summary = ""
         self.jobs: dict[str, Job] = {}
-        self.tmpdir = tempfile.mkdtemp(prefix=f"thamtra_{sid[:8]}_")
+        import hashlib
+        tag = hashlib.sha1(sid.encode("utf-8")).hexdigest()[:10]   # sid có thể là email -> không dùng làm tên thư mục
+        self.tmpdir = tempfile.mkdtemp(prefix=f"thamtra_{tag}_")
         self.lock = threading.Lock()   # một tác vụ nặng tại một thời điểm
         self.last_used = time.time()
 

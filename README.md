@@ -49,6 +49,18 @@ Ma trận mẫu `templates/Ma_tran_va_cham_mau.xlsx` (24 phép thử, nhóm A1�
 
 Nhập API key Claude trong *Cài đặt* (chỉ giữ trong bộ nhớ phiên) hoặc đặt biến môi trường `ANTHROPIC_API_KEY` trên máy chủ. AI chỉ nhận kết quả truy vấn tóm tắt (tên lớp, tên, thuộc tính, thống kê), không nhận file IFC. Kết luận thẩm tra do chuyên gia quyết định.
 
+## Đăng nhập bằng Google (khi đưa lên mạng)
+
+Mặc định tắt (dùng nội bộ). Để bật:
+
+1. Vào https://console.cloud.google.com/apis/credentials → *Create credentials* → *OAuth client ID* → loại **Web application**.
+   - *Authorized redirect URIs*: `<địa chỉ trang>/auth/callback` (vd `http://localhost:8000/auth/callback`, `https://thamtra.congty.vn/auth/callback`).
+   - Lần đầu Google yêu cầu khai báo *OAuth consent screen* (tên ứng dụng, email hỗ trợ). Chọn *Internal* nếu công ty dùng Google Workspace.
+2. Sao chép `config.env.example` thành `config.env`, điền `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `SESSION_SECRET` và **ai được dùng**: `AUTH_ALLOWED_DOMAINS=congty.com.vn` và/hoặc `AUTH_ALLOWED_EMAILS=a@gmail.com,b@gmail.com`.
+3. Khởi động lại `run_web.bat`. Khi chạy trên cloud (Docker/HF Spaces) đặt các giá trị trên làm biến môi trường / Secrets.
+
+Mỗi tài khoản có không gian làm việc riêng; gỡ email khỏi danh sách là mất quyền ngay. Nhật ký đăng nhập ghi ở `logs/access.log`.
+
 ## Deploy
 
 - **Máy chủ công ty (khuyến nghị cho hồ sơ dự án):** chạy `run_web.bat` trên 1 máy Windows, hoặc Docker: `docker build -t thamtra . && docker run -p 8000:7860 thamtra`.

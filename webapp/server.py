@@ -10,7 +10,7 @@ import time
 from collections import Counter
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from ifc_checker import APP_NAME, AUTHOR, AUTHOR_PHONE, __version__
@@ -23,6 +23,7 @@ from ifc_checker.rules import (CONDITIONS, SEVERITIES, TARGETS, Rule, default_ru
 from ifc_checker.textnorm import value_to_str
 from ifc_checker.viewer_data import build_scene, scene_key
 
+from .auth import COOKIE, SESSION_DAYS, Auth, new_state
 from .workspace import WorkspaceStore, safe_name
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -31,17 +32,100 @@ app = FastAPI(title=APP_NAME, version=__version__)
 app.mount("/static", StaticFiles(directory=os.path.join(ROOT, "static")), name="static")
 app.mount("/viewer", StaticFiles(directory=VIEWER), name="viewer")
 store = WorkspaceStore()
+auth = Auth()
+PUBLIC = ("/login", "/auth/", "/static/", "/viewer/", "/favicon")
 SEV_VN = {"ERROR": "Lỗi", "WARNING": "Cảnh báo", "INFO": "Thông tin"}
 
 
 @app.middleware("http")
-async def session_cookie(request: Request, call_next):
-    sid = request.cookies.get("sid")
+async def gate(request: Request, call_next):
+    """Bật đăng nhập Google: chưa đăng nhập thì chuyển tới /login (trang) hoặc trả 401 (API).
+    Mỗi tài khoản có không gian làm việc riêng; khi tắt đăng nhập dùng cookie phiên ẩn danh."""
+    path = request.url.path
+    user = auth.read_cookie(request.cookies.get(COOKIE)) if auth.enabled else None
+    if auth.enabled and user is None and not path.startswith(PUBLIC):
+        if path.startswith("/api/"):
+            return JSONResponse({"detail": "Cần đăng nhập"}, status_code=401)
+        return RedirectResponse("/login")
+    request.state.user = user
+    if path.startswith(PUBLIC):
+        request.state.sid = None
+        return await call_next(request)
+    sid = ("u:" + user["email"]) if user else request.cookies.get("sid")
     ws = store.get(sid)
     request.state.sid = ws.sid
     resp = await call_next(request)
-    if sid != ws.sid:
+    if not user and request.cookies.get("sid") != ws.sid:
         resp.set_cookie("sid", ws.sid, httponly=True, samesite="lax", max_age=7 * 24 * 3600)
+    return resp
+
+
+# ====================================================================== đăng nhập Google
+def _is_https(request: Request) -> bool:
+    return request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https" \
+        or auth.public_url.startswith("https")
+
+
+@app.get("/login")
+def login_page(request: Request, err: str = ""):
+    if not auth.enabled:
+        return RedirectResponse("/")
+    if auth.read_cookie(request.cookies.get(COOKIE)):
+        return RedirectResponse("/")
+    html = open(os.path.join(ROOT, "static", "login.html"), encoding="utf-8").read()
+    msg = {"denied": "Tài khoản này chưa được cấp quyền sử dụng. Liên hệ quản trị để được thêm vào danh sách.",
+           "state": "Phiên đăng nhập hết hạn, vui lòng thử lại.",
+           "google": "Đăng nhập Google không thành công, vui lòng thử lại."}.get(err, "")
+    dom = ", ".join("@" + d for d in sorted(auth.domains))
+    html = html.replace("{{ERROR}}", msg).replace("{{DOMAINS}}", f"Dành cho tài khoản {dom}" if dom else "") \
+        .replace("{{AUTHOR}}", f"{AUTHOR} · ĐT: {AUTHOR_PHONE}").replace("{{VERSION}}", __version__)
+    return HTMLResponse(html)
+
+
+@app.get("/auth/google")
+def auth_google(request: Request):
+    if not auth.enabled:
+        return RedirectResponse("/")
+    state = new_state()
+    resp = RedirectResponse(auth.login_url(str(request.base_url), state))
+    resp.set_cookie("tt_state", auth.signer.dumps(state), max_age=600, httponly=True, samesite="lax",
+                    secure=_is_https(request))
+    return resp
+
+
+@app.get("/auth/callback")
+def auth_callback(request: Request, code: str = "", state: str = "", error: str = ""):
+    ip = request.client.host if request.client else ""
+    try:
+        expected = auth.signer.loads(request.cookies.get("tt_state", ""), max_age=600)
+    except Exception:
+        expected = None
+    if error or not code:
+        return RedirectResponse("/login?err=google")
+    if not expected or expected != state:
+        return RedirectResponse("/login?err=state")
+    try:
+        user = auth.exchange(str(request.base_url), code)
+    except Exception:
+        return RedirectResponse("/login?err=google")
+    if not auth.allowed(user["email"]):
+        auth.log("denied", user["email"], ip)
+        return RedirectResponse("/login?err=denied")
+    auth.log("login", user["email"], ip)
+    resp = RedirectResponse("/")
+    resp.set_cookie(COOKIE, auth.make_cookie(user), max_age=SESSION_DAYS * 86400, httponly=True, samesite="lax",
+                    secure=_is_https(request))
+    resp.delete_cookie("tt_state")
+    return resp
+
+
+@app.get("/auth/logout")
+def auth_logout(request: Request):
+    u = auth.read_cookie(request.cookies.get(COOKIE)) if auth.enabled else None
+    if u:
+        auth.log("logout", u["email"], request.client.host if request.client else "")
+    resp = RedirectResponse("/login" if auth.enabled else "/")
+    resp.delete_cookie(COOKIE)
     return resp
 
 
@@ -61,6 +145,7 @@ def state(request: Request):
     res = ws.result
     return {
         "app": {"name": APP_NAME, "version": __version__, "author": AUTHOR, "phone": AUTHOR_PHONE},
+        "user": getattr(request.state, "user", None), "auth": auth.describe(),
         "models": [{"file": m.file_name, "schema": m.schema, "app": m.application, "project": m.project_name,
                     "elements": len(m.elements), "parts": m.part_count, "error": m.error, "warnings": m.warnings,
                     "proxies": sum(1 for r in m.elements if r.ifc_class == "IfcBuildingElementProxy"),
