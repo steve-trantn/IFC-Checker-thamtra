@@ -179,13 +179,20 @@
         sx = e.clientX; sy = e.clientY;
         const off = this.camera.position.clone().sub(this.target);
         if (mode === "rot") {
-          // hệ Z-up: xoay theo góc phương vị / thiên đỉnh quanh tâm
-          const r = off.length();
-          let az = Math.atan2(off.y, off.x), el_ = Math.acos(Math.min(1, Math.max(-1, off.z / r)));
-          az -= dx * 0.006;
-          el_ = Math.min(Math.PI - 0.01, Math.max(0.01, el_ - dy * 0.006));
-          off.set(r * Math.sin(el_) * Math.cos(az), r * Math.sin(el_) * Math.sin(az), r * Math.cos(el_));
-          this.camera.position.copy(this.target).add(off);
+          // hệ Z-up: xoay quanh TÂM XOAY (đối tượng / điểm đang chọn; mặc định là tâm khung nhìn).
+          // Xoay cả vị trí camera lẫn điểm nhìn quanh tâm xoay -> hướng nhìn không bị giật.
+          const pivot = this._pivot || this.target;
+          const fwd = this.target.clone().sub(this.camera.position).normalize();
+          const right = new T.Vector3().crossVectors(fwd, this.camera.up);
+          const q = new T.Quaternion().setFromAxisAngle(new T.Vector3(0, 0, 1), -dx * 0.006);
+          if (right.lengthSq() > 1e-8) {
+            right.normalize();
+            const qe = new T.Quaternion().setFromAxisAngle(right, -dy * 0.006);
+            const nf = fwd.clone().applyQuaternion(qe);
+            if (Math.abs(nf.z) < 0.995) q.multiply(qe);         // không lật qua đỉnh / đáy
+          }
+          for (const pt of [this.camera.position, this.target]) pt.sub(pivot).applyQuaternion(q).add(pivot);
+          this._showPivot(true);
         } else {
           const dist = off.length();
           const scale = (2 * dist * Math.tan((this.camera.fov * Math.PI) / 360)) / this.canvasWrap.clientHeight;
@@ -198,6 +205,7 @@
         this._render();
       });
       dom.addEventListener("pointerup", (e) => {
+        this._showPivot(false);
         if (mode === "box") {
           this._boxEl.style.display = "none";
           if (moved) this._boxSelect(bx, by, e.clientX, e.clientY, e.ctrlKey || e.metaKey);
@@ -571,6 +579,7 @@
 
     clearSelection(notify) {
       this.selected = [];
+      this._pivot = null;
       if (notify && this.opts.onSelect) setTimeout(() => this.opts.onSelect([]), 0);
       this.activeClash = null;
       if (this.activeMarker) this.activeMarker.visible = false;
@@ -596,6 +605,7 @@
       ids = (ids || []).filter((i) => i != null && i >= 0 && i < this.meta.objects.length);
       this.selected = ids;
       this.activeClash = null;
+      this._pivot = ids.length ? this._boxOf(ids).getCenter(new T.Vector3()) : null;
       if (this.activeMarker) this.activeMarker.visible = false;
       this._highlight([], ids);
       if (this.hideOk) this._rebuildIndex();
@@ -613,6 +623,7 @@
       const c = (this.meta.clashes || []).find((x) => x.id === id);
       if (!c) return;
       this.activeClash = c;
+      this._pivot = new T.Vector3(c.p[0], c.p[1], c.p[2]);
       const ids = [c.a, c.b].filter((x) => x != null);
       this.selected = ids;
       this._highlight(c.b != null ? [c.b] : [], c.a != null ? [c.a] : []);
@@ -707,6 +718,7 @@
         return;
       }
       const oi = h.object === this.proxyMesh ? this.proxyIds[h.instanceId] : this.triObj[h.faceIndex];
+      this._pickPoint = h.point.clone();
       if (e.ctrlKey || e.metaKey) {
         const set = new Set(this.selected);
         if (set.has(oi)) set.delete(oi); else set.add(oi);
@@ -734,6 +746,11 @@
         this.info.querySelector(".ttv-x").onclick = () => (this.info.style.display = "none");
       } else this.info.style.display = "none";
       if (opts.zoom && ids.length) this._flyToBox(this._boxOf(ids), this._samplePoints(ids, 20000));
+      // tâm xoay: điểm vừa nháy (chọn 1 đối tượng) hoặc tâm nhóm đối tượng đang chọn
+      if (!ids.length) this._pivot = null;
+      else if (this._pickPoint && ids.length === 1) this._pivot = this._pickPoint;
+      else this._pivot = this._boxOf(ids).getCenter(new T.Vector3());
+      this._pickPoint = null;
       this._updateStatus();
       if (ids.length === 1 && this.opts.onPick) {
         const o = this.meta.objects[ids[0]];
@@ -764,8 +781,29 @@
       objs.forEach((o, i) => { if (vals.has(o[col]) && !this.hiddenSet.has(i) && (!this.isolateSet || this.isolateSet.has(i))) ids.push(i); });
       this.select(ids);
     }
+    _showPivot(on) {
+      if (on && !this._pivot) on = false;
+      if (!this._pivotMk) {
+        if (!on) return;
+        const g = new T.BufferGeometry();
+        g.setAttribute("position", new T.BufferAttribute(new Float32Array(3), 3));
+        this._pivotMk = new T.Points(g, new T.PointsMaterial({ color: 0xff8c1a, size: 12, sizeAttenuation: false, depthTest: false,
+          map: this._dotTexture(false), transparent: true }));
+        this._pivotMk.renderOrder = 13;
+        this._pivotMk.frustumCulled = false;
+        this.scene.add(this._pivotMk);
+      }
+      if (on) {
+        const a = this._pivotMk.geometry.getAttribute("position");
+        a.setXYZ(0, this._pivot.x, this._pivot.y, this._pivot.z);
+        a.needsUpdate = true;
+      }
+      if (this._pivotMk.visible !== !!on) { this._pivotMk.visible = !!on; this._render(); }
+    }
+
     /** Xoá mô hình khỏi trình xem (giải phóng bộ nhớ). */
     clear() {
+      this._pivot = null;
       for (const k of ["mesh", "hlMesh", "xrMesh", "proxyMesh", "clashMesh", "overlay", "markers"]) {
         if (this[k]) { this.scene.remove(this[k]); if (this[k].geometry) this[k].geometry.dispose(); this[k] = null; }
       }
