@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ids:ids xmlns:ids="http://standards.buildingsmart.org/IDS" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://standards.buildingsmart.org/IDS http://standards.buildingsmart.org/IDS/1.0/ids.xsd">
+  <ids:info>
+    <ids:title>Mau IDS - yeu cau thong tin co ban</ids:title>
+  </ids:info>
+  <ids:specifications>
+    <ids:specification name="Tuong phai khai bao chiu luc" ifcVersion="IFC2X3 IFC4 IFC4X3_ADD2" identifier="W01">
+      <ids:applicability minOccurs="0" maxOccurs="unbounded">
+        <ids:entity><ids:name><ids:simpleValue>IFCWALLSTANDARDCASE</ids:simpleValue></ids:name></ids:entity>
+      </ids:applicability>
+      <ids:requirements>
+        <ids:property dataType="IFCBOOLEAN" cardinality="required">
+          <ids:propertySet><ids:simpleValue>Pset_WallCommon</ids:simpleValue></ids:propertySet>
+          <ids:baseName><ids:simpleValue>LoadBearing</ids:simpleValue></ids:baseName>
+        </ids:property>
+      </ids:requirements>
+    </ids:specification>
+    <ids:specification name="Cua di phai co gioi han chiu lua" ifcVersion="IFC2X3 IFC4 IFC4X3_ADD2" identifier="D01">
+      <ids:applicability minOccurs="0" maxOccurs="unbounded">
+        <ids:entity><ids:name><ids:simpleValue>IFCDOOR</ids:simpleValue></ids:name></ids:entity>
+      </ids:applicability>
+      <ids:requirements>
+        <ids:property dataType="IFCLABEL" cardinality="required">
+          <ids:propertySet><ids:simpleValue>Pset_DoorCommon</ids:simpleValue></ids:propertySet>
+          <ids:baseName><ids:simpleValue>FireRating</ids:simpleValue></ids:baseName>
+        </ids:property>
+      </ids:requirements>
+    </ids:specification>
+  </ids:specifications>
+</ids:ids>
