@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Thẩm Tra Mô Hình BIM - Xem 3D</title>
+<style>html,body{margin:0;height:100%;background:#eef1f5}#v{position:absolute;inset:0}</style>
+<style id="ttv-css"></style>
+<script src="three.min.js"></script>
+<script src="viewer.js"></script>
+</head>
+<body>
+<div id="v"></div>
+<script>
+/* Bản desktop: dữ liệu và lệnh "phóng tới đối tượng" lấy từ máy chủ cục bộ của phần mềm */
+document.getElementById("ttv-css").textContent = ThamTraViewer.CSS;
+const viewer = new ThamTraViewer(document.getElementById("v"), {
+  onPick: function (p) {
+    fetch("pick", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(p) }).catch(function () {});
+  },
+});
+let sceneKey = null, focusSeq = -1, busy = false;
+
+async function loadScene(key) {
+  const res = await Promise.all([
+    fetch("meta.json?k=" + key).then(function (r) { return r.json(); }),
+    fetch("data.bin?k=" + key).then(function (r) { return r.arrayBuffer(); }),
+  ]);
+  viewer.load(res[0], res[1]);
+  sceneKey = key;
+  focusSeq = -1;
+}
+
+async function poll() {
+  if (busy) return;
+  busy = true;
+  try {
+    const s = await fetch("state").then(function (r) { return r.json(); });
+    if (s.key && s.key !== sceneKey) await loadScene(s.key);
+    if (s.seq !== focusSeq && sceneKey) {
+      focusSeq = s.seq;
+      if (s.clash) viewer.focusClash(s.clash);
+      else if (s.ids && s.ids.length) viewer.focus(s.ids, { silent: true });
+    }
+    document.title = "Thẩm Tra Mô Hình BIM - Xem 3D";
+  } catch (e) {
+    viewer.status.textContent = "Mất kết nối với phần mềm (đã đóng?)";
+  }
+  busy = false;
+}
+poll();
+setInterval(poll, 600);
+</script>
+</body>
+</html>

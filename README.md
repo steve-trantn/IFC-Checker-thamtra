@@ -24,8 +24,15 @@ run_web.bat                  :: bản web, mở trong trình duyệt (hoặc: st
 1. **Hồ sơ IFC** – thêm file/thư mục (IFC2X3, IFC4, IFC4X3; nhiều bộ môn cùng lúc).
 2. **Quy tắc BEP** – mở bộ quy tắc Excel (`templates/BEP_Rules_Mau.xlsx`), sửa trong Excel rồi bấm *Tải lại*; hoặc **Nhập Phụ lục LOI từ BEP** (.docx/.xlsx có bảng *Nhóm | Thông tin | Kiểu*) — phần mềm tự đọc bảng, tự gán hạng mục với file IFC theo tên file, không cần AI; hoặc dùng AI đọc BEP dạng khác; có thể chạy kèm file **IDS** (chuẩn buildingSMART).
 3. **Chạy kiểm tra** → tab *Kết quả*: tỷ lệ đạt theo file / theo quy tắc / chi tiết từng đối tượng. Nhấp đúp để xem toàn bộ thuộc tính; chuột phải để copy GlobalId (dán vào Navisworks/Revit/BIMcollab để tìm).
-4. **Thống kê** – số đối tượng theo lớp IFC; mức độ điền của từng thuộc tính (đối chiếu nhanh với BEP).
-5. **Xuất báo cáo** Excel (6 sheet + biểu đồ) kèm HTML.
+4. **Xung đột & 3D** – kiểm tra va chạm giữa các mô hình, xem mô hình 3D bên cạnh bảng lỗi/xung đột (xem mục dưới).
+5. **Thống kê** – số đối tượng theo lớp IFC; mức độ điền của từng thuộc tính (đối chiếu nhanh với BEP).
+6. **Xuất báo cáo** Excel (biểu đồ, xung đột) kèm HTML; xung đột xuất thêm **BCF 2.1**.
+
+## Xem mô hình 3D & kiểm tra xung đột
+
+- **Xem 3D**: bản web hiển thị khung 3D ngay **bên cạnh** bảng lỗi / bảng xung đột; bản desktop mở cửa sổ 3D trong trình duyệt và **liên kết 2 chiều** với phần mềm (chọn dòng → camera phóng tới đối tượng; nháy chọn trong 3D → chọn dòng lỗi). Tô màu theo kết quả kiểm tra (đỏ lỗi / vàng cảnh báo / xanh đạt), theo file hoặc theo lớp IFC; đối tượng bị che khuất (vd hố ga dưới mặt đường) hiện dạng x-quang. Thư viện three.js đóng gói sẵn — chạy được trong mạng nội bộ không có Internet.
+- **Xung đột**: mỗi phép thử so nhóm A với nhóm B (lọc theo **tên file** + **lớp IFC**), mặc định tạo theo từng cặp file. Va chạm tính trên lưới tam giác bằng thư viện FCL, báo **độ sâu xuyên** để lọc theo dung sai. Nên tắt các cặp tiếp xúc theo thiết kế (vd hố ga × mặt đường) theo ma trận va chạm trong BEP. Với bề mặt hở (địa hình, mặt đường) độ sâu chỉ mang tính tham khảo.
+- Phần mềm tự xử lý lỗi xuất IFC hay gặp: `IfcStyledItem` bị đặt nhầm vào danh sách hình học (làm nhiều phần mềm không hiển thị được đối tượng) — vẫn dựng hình được và báo lỗi này trong trạng thái file.
 
 ## Bộ quy tắc (sheet `Rules`)
 
@@ -68,9 +75,18 @@ ifc_checker/model_loader   đọc IFC, trích thuộc tính, vật liệu, phân
 ifc_checker/rules          bộ quy tắc, đọc/ghi Excel-JSON, bộ mẫu mặc định
 ifc_checker/engine         áp quy tắc, kiểm tra tên ↔ lớp IFC, thống kê
 ifc_checker/ids_runner     chạy IDS bằng ifctester
+ifc_checker/bep_import     nhập Phụ lục LOI từ BEP (.docx/.xlsx) thành quy tắc
 ifc_checker/report         xuất Excel / HTML / JSON
+ifc_checker/geometry       dựng lưới tam giác (ifcopenshell.geom), dùng chung cho 3D và xung đột
+ifc_checker/clash          kiểm tra xung đột (FCL)
+ifc_checker/bcf            xuất BCF 2.1
+ifc_checker/viewer/        trình xem 3D (three.js) + trang cho web / desktop
+ifc_checker/viewer_data    đóng gói hình học + trạng thái cho trình xem
+ifc_checker/viewer_server  máy chủ cục bộ cho trình xem của bản desktop
+ifc_checker/web_viewer     nhúng trình xem vào Streamlit
 ifc_checker/ai             tích hợp Claude (tuỳ chọn)
-ifc_checker/gui            giao diện tkinter
+ifc_checker/gui            giao diện desktop (tkinter)
+web_app.py                 giao diện web (Streamlit)
 ```
 
 ## Lưu ý

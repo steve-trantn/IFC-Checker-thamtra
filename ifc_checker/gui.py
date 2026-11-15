@@ -8,6 +8,7 @@ import sys
 import threading
 import tkinter as tk
 import traceback
+from collections import Counter
 from tkinter import filedialog, messagebox, ttk
 
 from . import APP_NAME, CREDIT, __version__
@@ -58,6 +59,12 @@ class App(tk.Tk):
         self.q: queue.Queue = queue.Queue()
         self.busy = False
         self.cancel_flag = threading.Event()
+        self.srv = None            # máy chủ trình xem 3D (tạo khi cần)
+        self.scene_meta = None
+        self.scene_dirty = True
+        self.clash_run = None
+        self.clash_tests = []
+        self._suppress_focus = False
 
         self._style()
         self._build()
@@ -98,6 +105,7 @@ class App(tk.Tk):
         ttk.Button(bar, text="📋 Mở bộ quy tắc", command=self.open_rules).pack(side="left", padx=2)
         ttk.Button(bar, text="▶ CHẠY KIỂM TRA", style="Accent.TButton", command=self.run_check).pack(side="left", padx=8)
         ttk.Button(bar, text="📊 Xuất báo cáo", command=self.export_report).pack(side="left", padx=2)
+        ttk.Button(bar, text="🧊 Xem 3D", command=self.open_viewer).pack(side="left", padx=2)
         ttk.Button(bar, text="⚙ Cài đặt", command=self.open_settings).pack(side="right", padx=2)
         ttk.Button(bar, text="? Hướng dẫn", command=self.show_help).pack(side="right", padx=2)
 
@@ -106,6 +114,7 @@ class App(tk.Tk):
         self._tab_files()
         self._tab_rules()
         self._tab_results()
+        self._tab_clash()
         self._tab_stats()
         self._tab_ai()
 
@@ -265,6 +274,7 @@ class App(tk.Tk):
         e.bind("<Return>", lambda ev: self.refresh_issues())
         ttk.Button(flt, text="Lọc", command=self.refresh_issues).pack(side="left", padx=4)
         ttk.Button(flt, text="Bỏ lọc", command=self._clear_filters).pack(side="left")
+        ttk.Button(flt, text="🧊 Xem 3D", command=self.open_viewer).pack(side="left", padx=6)
         self.issue_info = tk.StringVar()
         ttk.Label(flt, textvariable=self.issue_info, style="Cap.TLabel").pack(side="right")
         cols = [("file", "File"), ("sev", "Mức độ"), ("rule", "Mã QT"), ("cls", "Lớp IFC"), ("name", "Tên đối tượng"),
@@ -273,6 +283,7 @@ class App(tk.Tk):
         fr.pack(fill="both", expand=True)
         self.tv_issues.bind("<Double-1>", self._on_issue_open)
         self.tv_issues.bind("<Button-3>", self._issue_menu)
+        self.tv_issues.bind("<<TreeviewSelect>>", self._on_issue_select)
         pw.add(down, weight=2)
 
     def _combo(self, parent, label, var, width, values=None):
@@ -282,10 +293,252 @@ class App(tk.Tk):
         cb.bind("<<ComboboxSelected>>", lambda e: self.refresh_issues())
         return cb
 
+    # ---------------------------------------------------------------- Tab Xung đột
+    def _tab_clash(self):
+        tab = ttk.Frame(self.nb, padding=8)
+        self.nb.add(tab, text="  4. Xung đột  ")
+        top = ttk.Frame(tab)
+        top.pack(fill="x")
+        ttk.Label(top, text="Phép thử xung đột", style="Title.TLabel").pack(side="left")
+        for txt, cmd in (("Tạo theo từng cặp file", self.clash_default), ("+ Thêm", self.clash_add),
+                         ("Sửa", self.clash_edit), ("Xoá", self.clash_del), ("Bật/Tắt", self.clash_toggle)):
+            ttk.Button(top, text=txt, command=cmd).pack(side="left", padx=2)
+        ttk.Label(top, text="Dung sai chung (m):").pack(side="left", padx=(12, 2))
+        self.clash_tol = tk.StringVar(value="0.01")
+        ttk.Entry(top, textvariable=self.clash_tol, width=7).pack(side="left")
+        ttk.Button(top, text="Áp dụng", command=self.clash_apply_tol).pack(side="left", padx=2)
+        ttk.Button(top, text="▶ CHẠY XUNG ĐỘT", style="Accent.TButton", command=self.run_clash_ui).pack(side="left", padx=10)
+        pw = ttk.PanedWindow(tab, orient="vertical")
+        pw.pack(fill="both", expand=True, pady=(4, 0))
+        up = ttk.Frame(pw)
+        cols = [("on", "Bật"), ("name", "Tên phép thử"), ("af", "Nhóm A - lọc file"), ("ac", "Nhóm A - lớp"),
+                ("bf", "Nhóm B - lọc file"), ("bc", "Nhóm B - lớp"), ("tol", "Dung sai (m)"), ("n", "Kết quả")]
+        fr, self.tv_tests = self._tree(up, cols, [40, 260, 260, 140, 260, 140, 90, 90], height=6,
+                                       anchors={"on": "center", "tol": "e", "n": "e"})
+        fr.pack(fill="both", expand=True)
+        self.tv_tests.bind("<Double-1>", lambda e: self.clash_edit())
+        ttk.Label(up, style="Cap.TLabel", text=(
+            "Nhóm = regex tên file + lớp IFC. Dung sai: bỏ qua va chạm có độ sâu xuyên nhỏ hơn (m). Nên tắt các cặp tiếp "
+            "xúc theo thiết kế (vd hố ga × mặt đường) theo ma trận va chạm trong BEP. Với bề mặt (địa hình, mặt đường) "
+            "độ sâu chỉ mang tính tham khảo.")).pack(anchor="w", pady=2)
+        pw.add(up, weight=1)
+        down = ttk.Frame(pw)
+        bar = ttk.Frame(down)
+        bar.pack(fill="x", pady=(4, 2))
+        ttk.Label(bar, text="Kết quả xung đột (chọn 1 dòng -> phóng tới trong cửa sổ 3D)", style="Title.TLabel").pack(side="left")
+        ttk.Button(bar, text="🧊 Xem 3D", command=self.open_viewer).pack(side="left", padx=6)
+        ttk.Button(bar, text="⬇ Xuất BCF", command=self.export_bcf_ui).pack(side="left", padx=2)
+        ttk.Button(bar, text="⬇ Xuất Excel", command=self.export_clash_excel).pack(side="left", padx=2)
+        self.clash_info = tk.StringVar()
+        ttk.Label(bar, textvariable=self.clash_info, style="Cap.TLabel").pack(side="right")
+        cols = [("id", "Mã"), ("test", "Phép thử"), ("d", "Độ sâu (m)"), ("ca", "Lớp A"), ("na", "Tên A"),
+                ("cb", "Lớp B"), ("nb", "Tên B"), ("xyz", "Vị trí X, Y, Z")]
+        fr, self.tv_clash = self._tree(down, cols, [70, 220, 80, 170, 230, 170, 230, 230], height=12,
+                                       anchors={"d": "e"})
+        fr.pack(fill="both", expand=True)
+        self.tv_clash.bind("<<TreeviewSelect>>", self._on_clash_select)
+        pw.add(down, weight=2)
+
+    def refresh_tests(self):
+        tv = self.tv_tests
+        tv.delete(*tv.get_children())
+        counts = Counter(c.test for c in (self.clash_run.clashes if self.clash_run else []))
+        for i, t in enumerate(self.clash_tests):
+            tv.insert("", "end", iid=str(i), values=("✔" if t.enabled else "", t.name, t.a_file, t.a_class, t.b_file,
+                                                     t.b_class, f"{t.tolerance:g}",
+                                                     counts.get(t.name, "") if self.clash_run else ""),
+                      tags=(() if t.enabled else ("off",)))
+
+    def clash_default(self):
+        from .clash import default_tests
+        if not self.models:
+            messagebox.showinfo(APP_NAME, "Chưa có file IFC.")
+            return
+        try:
+            tol = float(self.clash_tol.get().replace(",", "."))
+        except ValueError:
+            tol = 0.01
+        self.clash_tests = default_tests(list(self.models.values()), tol)
+        self.refresh_tests()
+
+    def _sel_tests(self):
+        return [int(i) for i in self.tv_tests.selection()]
+
+    def clash_add(self):
+        from .clash import ClashTest
+        t = ClashTest(name=f"Phép thử {len(self.clash_tests) + 1}")
+        if ClashTestDialog(self, t, "Thêm phép thử", [m.file_name for m in self.models.values()]).ok:
+            self.clash_tests.append(t)
+            self.refresh_tests()
+
+    def clash_edit(self):
+        sel = self._sel_tests()
+        if sel and ClashTestDialog(self, self.clash_tests[sel[0]], "Sửa phép thử",
+                                   [m.file_name for m in self.models.values()]).ok:
+            self.refresh_tests()
+
+    def clash_del(self):
+        for i in sorted(self._sel_tests(), reverse=True):
+            del self.clash_tests[i]
+        self.refresh_tests()
+
+    def clash_toggle(self):
+        sel = self._sel_tests()
+        for i in sel:
+            self.clash_tests[i].enabled = not self.clash_tests[i].enabled
+        self.refresh_tests()
+        for i in sel:
+            self.tv_tests.selection_add(str(i))
+
+    def clash_apply_tol(self):
+        try:
+            tol = float(self.clash_tol.get().replace(",", "."))
+        except ValueError:
+            messagebox.showwarning(APP_NAME, "Dung sai phải là số (m)")
+            return
+        for t in self.clash_tests:
+            t.tolerance = tol
+        self.refresh_tests()
+
+    def run_clash_ui(self):
+        from .clash import fcl_available, run_clash
+        if not fcl_available():
+            messagebox.showerror(APP_NAME, "Chưa cài thư viện kiểm tra va chạm.\nChạy: pip install python-fcl")
+            return
+        if not self.models:
+            messagebox.showinfo(APP_NAME, "Chưa có file IFC.")
+            return
+        if not self.clash_tests:
+            self.clash_default()
+        if not any(t.enabled for t in self.clash_tests):
+            messagebox.showinfo(APP_NAME, "Không có phép thử nào được bật.")
+            return
+        models = list(self.models.values())
+        tests = list(self.clash_tests)
+
+        def job(progress, cancel):
+            return run_clash(models, tests, progress, cancel)
+        self.run_bg("Đang kiểm tra xung đột (lần đầu cần dựng hình 3D)...", job, self._show_clash)
+
+    def _show_clash(self, run):
+        self.clash_run = run
+        if self.result is not None:
+            self.result.clashes, self.result.clash_messages = run.clashes, run.messages
+        self.scene_dirty = True
+        tv = self.tv_clash
+        tv.delete(*tv.get_children())
+        for i, c in enumerate(run.clashes[:MAX_ROWS]):
+            tv.insert("", "end", iid=str(i), values=(c.id, c.test, f"{c.depth:.3f}", c.class_a, c.name_a, c.class_b,
+                                                     c.name_b, f"{c.x:.2f}, {c.y:.2f}, {c.z:.2f}"))
+        more = f" (hiển thị {MAX_ROWS:,} dòng đầu)" if len(run.clashes) > MAX_ROWS else ""
+        self.clash_info.set(f"{len(run.clashes):,} xung đột{more}")
+        self.refresh_tests()
+        self.nb.select(3)
+        self.status.set(f"Kiểm tra xung đột xong: {len(run.clashes):,} va chạm. Bấm 'Xem 3D' để xem vị trí.")
+        if self.srv is not None:  # cửa sổ 3D đang mở -> cập nhật cảnh
+            self._ensure_scene(lambda: None)
+
+    def _on_clash_select(self, _e=None):
+        sel = self.tv_clash.selection()
+        if not sel or not self.clash_run:
+            return
+        c = self.clash_run.clashes[int(sel[0])]
+        if self.srv is not None and not self.scene_dirty:
+            self.srv.focus_clash(c.id)
+
+    def export_bcf_ui(self):
+        from .bcf import export_bcf
+        if not self.clash_run or not self.clash_run.clashes:
+            messagebox.showinfo(APP_NAME, "Chưa có kết quả xung đột.")
+            return
+        p = filedialog.asksaveasfilename(title="Xuất BCF", defaultextension=".bcfzip", initialfile="XungDot.bcfzip",
+                                         filetypes=[("BCF 2.1", "*.bcfzip")])
+        if p:
+            n = export_bcf(self.clash_run.clashes, p)
+            messagebox.showinfo(APP_NAME, f"Đã xuất {n} xung đột ra\n{p}\n\nMở bằng Navisworks / BIMcollab / Solibri / Revizto.")
+
+    def export_clash_excel(self):
+        if not self.clash_run or not self.clash_run.clashes:
+            messagebox.showinfo(APP_NAME, "Chưa có kết quả xung đột.")
+            return
+        p = filedialog.asksaveasfilename(title="Xuất Excel xung đột", defaultextension=".xlsx",
+                                         initialfile="XungDot.xlsx", filetypes=[("Excel", "*.xlsx")])
+        if p:
+            import time as _t
+            r = CheckResult(started=_t.strftime("%Y-%m-%d %H:%M:%S"), ruleset_source="(chỉ xung đột)",
+                            clashes=self.clash_run.clashes, clash_messages=self.clash_run.messages)
+            export_excel(r, p)
+            if messagebox.askyesno(APP_NAME, f"Đã xuất {p}\nMở file?"):
+                _open_file(p)
+
+    # ---------------------------------------------------------------- Xem 3D
+    def open_viewer(self):
+        if not self.models:
+            messagebox.showinfo(APP_NAME, "Chưa có file IFC.")
+            return
+        self._ensure_scene(lambda: self.srv.open_browser())
+
+    def _ensure_scene(self, then):
+        from .viewer_data import build_scene, scene_key
+        from .viewer_server import ViewerServer
+        if self.srv is None:
+            self.srv = ViewerServer()
+        if not self.scene_dirty and self.scene_meta is not None:
+            then()
+            return
+        models = [m for m in self.models.values() if not m.error]
+        res, run = self.result, self.clash_run
+
+        def job(progress, cancel):
+            return build_scene(models, res, run, progress, cancel)
+
+        def done(r):
+            data, meta = r
+            self.srv.set_scene(data, meta, scene_key(data, meta))
+            self.scene_meta = meta
+            self.scene_dirty = False
+            self.status.set(f"Mô hình 3D: {len(meta['objects']):,} đối tượng, {meta['ntris']:,} tam giác · {self.srv.url}")
+            then()
+        self.run_bg("Đang dựng mô hình 3D (lần đầu có thể mất 1-2 phút)...", job, done)
+
+    def _on_issue_select(self, _e=None):
+        if self._suppress_focus:  # dòng được chọn từ cửa sổ 3D -> không phóng camera lại
+            self._suppress_focus = False
+            return
+        if self.srv is None or self.scene_dirty or not self.scene_meta or not self.result:
+            return
+        sel = self.tv_issues.selection()
+        if not sel:
+            return
+        from .viewer_data import objects_for
+        i = self._issue_from_iid(sel[0])
+        model = next((m for m in self.models.values() if m.file_name == i.file), None)
+        ids = objects_for(self.scene_meta, i.file, i.step_id, model)
+        if ids:
+            self.srv.focus(ids)
+        else:
+            self.status.set("Đối tượng này không có hình học 3D")
+
+    def _handle_pick(self, p: dict):
+        """Người dùng nháy chọn đối tượng trong cửa sổ 3D -> chọn dòng lỗi tương ứng."""
+        f, step = p.get("file"), p.get("step")
+        self.status.set(f"3D: đã chọn {p.get('guid')} ({f} #{step})")
+        if not self.result:
+            return
+        for iid in self.tv_issues.get_children():
+            i = self._issue_from_iid(iid)
+            if i.file == f and i.step_id == step:
+                self._suppress_focus = True
+                self.tv_issues.selection_set(iid)
+                self.tv_issues.see(iid)
+                self.nb.select(2)
+                return
+        self.status.set(f"3D: {p.get('guid')} - không có lỗi trong danh sách đang lọc")
+
     # ---------------------------------------------------------------- Tab 4
     def _tab_stats(self):
         tab = ttk.Frame(self.nb, padding=8)
-        self.nb.add(tab, text="  4. Thống kê  ")
+        self.nb.add(tab, text="  5. Thống kê  ")
         pw = ttk.PanedWindow(tab, orient="horizontal")
         pw.pack(fill="both", expand=True)
         left = ttk.Frame(pw)
@@ -315,7 +568,7 @@ class App(tk.Tk):
     # ---------------------------------------------------------------- Tab 5
     def _tab_ai(self):
         tab = ttk.Frame(self.nb, padding=8)
-        self.nb.add(tab, text="  5. Trợ lý AI  ")
+        self.nb.add(tab, text="  6. Trợ lý AI  ")
         top = ttk.Frame(tab)
         top.pack(fill="x")
         self.ai_info = tk.StringVar()
@@ -410,6 +663,12 @@ class App(tk.Tk):
                         messagebox.showerror(APP_NAME, str(item[1]))
         except queue.Empty:
             pass
+        if self.srv is not None:
+            try:
+                while True:
+                    self._handle_pick(self.srv.picks.get_nowait())
+            except queue.Empty:
+                pass
         self.after(100, self._poll)
 
     # ================================================================ files
@@ -456,7 +715,7 @@ class App(tk.Tk):
         self.models[m.path] = m
         for r in m.records:
             self.rec_index[(m.file_name, r.step_id)] = r
-        status = m.error or f"OK ({m.load_seconds:.1f}s)"
+        status = m.error or (f"⚠ {m.warnings[0]}" if m.warnings else f"OK ({m.load_seconds:.1f}s)")
         proxies = sum(1 for r in m.records if r.kind == "element" and r.ifc_class == "IfcBuildingElementProxy")
         if self.tv_files.exists(m.path):
             self.tv_files.item(m.path, values=(m.file_name, m.schema, m.application, m.project_name,
@@ -464,6 +723,7 @@ class App(tk.Tk):
                                tags=("ERROR",) if m.error else ())
 
     def _after_files(self):
+        self.scene_dirty = True
         for iid in self.tv_files.get_children():
             if iid not in self.models:
                 self.tv_files.delete(iid)
@@ -718,7 +978,10 @@ class App(tk.Tk):
         old = self.result
         if old is not None:  # giữ kết quả AI của lần trước nếu có
             res.ai_suggestions = old.ai_suggestions
+        if self.clash_run is not None:
+            res.clashes, res.clash_messages = self.clash_run.clashes, self.clash_run.messages
         self.result = res
+        self.scene_dirty = True
         t = res.totals()
         self.card_vars["checked"].set(f"{t['checked']:,}")
         self.card_vars["compliance"].set(f"{t['compliance']:.1f}%")
@@ -960,7 +1223,7 @@ class App(tk.Tk):
             changed = sum(1 for s in items if s.get("changed"))
             self.status.set(f"AI đề xuất xong: {changed}/{len(items)} nhóm nên đổi lớp IFC. "
                             f"Token: {client.usage['input']:,} vào / {client.usage['output']:,} ra")
-            self.nb.select(4)
+            self.nb.select(5)
         self.run_bg("AI đang phân tích chủng loại đối tượng...", job, done)
 
     def ai_summarize(self):
@@ -980,7 +1243,7 @@ class App(tk.Tk):
             self.ai_text.insert("1.0", text)
             res.ai_summary = text
             self.status.set("AI đã viết nhận xét (đã đưa vào báo cáo; có thể sửa trực tiếp rồi bấm 'Đưa nhận xét vào báo cáo').")
-            self.nb.select(4)
+            self.nb.select(5)
         self.run_bg("AI đang viết nhận xét thẩm tra...", job, done)
 
     def _ai_text_to_report(self):
@@ -1068,6 +1331,8 @@ class App(tk.Tk):
             self.settings.save()
         except Exception:
             pass
+        if self.srv is not None:
+            self.srv.shutdown()
         self.destroy()
 
 
@@ -1216,6 +1481,53 @@ class LoiMapDialog(_Dialog):
                     messagebox.showwarning(APP_NAME, f"Regex lỗi ở '{row[0]}': {ex}", parent=self)
                     return False
             row[2], row[3] = vc.get().strip() or "*", ff
+        return True
+
+
+class ClashTestDialog(_Dialog):
+    def __init__(self, master, test, title, file_names):
+        super().__init__(master, title)
+        self.t = test
+        b = self.body
+        self.vars = {}
+        rows = [("name", "Tên phép thử", None),
+                ("a_file", "Nhóm A - lọc tên file (regex)", "vd THOATNUOCMUA  ·  để trống = mọi file"),
+                ("a_class", "Nhóm A - lớp IFC", "vd IfcDistributionChamberElement;IfcPipeSegment  ·  * = mọi lớp"),
+                ("b_file", "Nhóm B - lọc tên file (regex)", "Đặt giống nhóm A để kiểm tra va chạm nội bộ"),
+                ("b_class", "Nhóm B - lớp IFC", None),
+                ("tolerance", "Dung sai (m)", "Bỏ qua va chạm có độ sâu xuyên nhỏ hơn giá trị này"),
+                ("max_results", "Số kết quả tối đa", None)]
+        for r_, (k, label, hint) in enumerate(rows):
+            ttk.Label(b, text=label).grid(row=r_ * 2, column=0, sticky="w", pady=(4, 0), padx=(0, 8))
+            v = tk.StringVar(value=str(getattr(test, k)))
+            self.vars[k] = v
+            ttk.Entry(b, textvariable=v, width=60).grid(row=r_ * 2, column=1, sticky="ew", pady=(4, 0))
+            if hint:
+                ttk.Label(b, text=hint, style="Cap.TLabel").grid(row=r_ * 2 + 1, column=1, sticky="w")
+        if file_names:
+            ttk.Label(b, text="File đang mở: " + ", ".join(file_names), style="Cap.TLabel", wraplength=600,
+                      justify="left").grid(row=50, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        b.columnconfigure(1, weight=1)
+        self.finish()
+
+    def apply(self):
+        import re
+        v = {k: x.get().strip() for k, x in self.vars.items()}
+        for k in ("a_file", "b_file"):
+            try:
+                re.compile(v[k])
+            except re.error as ex:
+                messagebox.showwarning(APP_NAME, f"Regex lỗi: {ex}", parent=self)
+                return False
+        try:
+            tol, mx = float(v["tolerance"].replace(",", ".")), int(v["max_results"])
+        except ValueError:
+            messagebox.showwarning(APP_NAME, "Dung sai / số kết quả phải là số", parent=self)
+            return False
+        self.t.name = v["name"] or self.t.name
+        self.t.a_file, self.t.b_file = v["a_file"], v["b_file"]
+        self.t.a_class, self.t.b_class = v["a_class"] or "*", v["b_class"] or "*"
+        self.t.tolerance, self.t.max_results = tol, mx
         return True
 
 
@@ -1373,7 +1685,14 @@ class HelpWindow(tk.Toplevel):
 4. Phát hiện sai chủng loại: so sánh tên đối tượng với bảng từ khoá (sheet ClassMapping),
    vd tên chứa 'tường' nhưng xuất là IfcBeam/IfcBuildingElementProxy. AI có thể đề xuất lớp đúng.
 
-5. Xuất báo cáo Excel (kèm HTML) - có thể đính kèm vào báo cáo thẩm tra.
+5. Xung đột: tab 4 tạo phép thử theo từng cặp file (hoặc tự định nghĩa nhóm A/B theo tên file + lớp IFC),
+   đặt dung sai, chạy, rồi xuất BCF (mở trong Navisworks/BIMcollab/Solibri) hoặc Excel.
+
+6. Xem 3D: nút 'Xem 3D' mở mô hình trong trình duyệt, liên kết 2 chiều với phần mềm:
+   chọn 1 dòng lỗi / xung đột -> camera phóng tới đối tượng; nháy chọn đối tượng trong 3D -> chọn dòng lỗi.
+   Màu: đỏ = lỗi, vàng = cảnh báo, xanh = đạt. Đối tượng bị che (vd hố ga dưới mặt đường) hiện dạng x-quang.
+
+7. Xuất báo cáo Excel (kèm HTML, gồm cả xung đột) - có thể đính kèm vào báo cáo thẩm tra.
 
 LƯU Ý
 - 'Đối tượng đạt' = không vi phạm quy tắc mức ERROR.

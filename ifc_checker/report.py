@@ -147,6 +147,28 @@ def export_excel(res: CheckResult, path: str) -> None:
         ws.conditional_formatting.add(f"H2:H{last}", DataBarRule(start_type="num", start_value=0, end_type="num",
                                                                  end_value=100, color="5B9BD5"))
 
+    # ---- Xung đột
+    if res.clashes:
+        ws = wb.create_sheet("Xung đột", 1)
+        from collections import Counter as _C
+        by_test = _C(c.test for c in res.clashes)
+        ws.append(["Phép thử", "Số va chạm"])
+        for t_, n in by_test.most_common():
+            ws.append([t_, n])
+        for c_ in ws[1]:
+            c_.fill, c_.font = hdr_fill, hdr_font
+        start = ws.max_row + 2
+        headers = ["Mã", "Phép thử", "Trạng thái", "Độ sâu xuyên (m)", "File A", "Lớp A", "Tên A", "GlobalId A",
+                   "File B", "Lớp B", "Tên B", "GlobalId B", "X", "Y", "Z", "Ghi chú"]
+        rows = [(c.id, c.test, c.status, c.depth, c.file_a, c.class_a, c.name_a, c.guid_a, c.file_b, c.class_b,
+                 c.name_b, c.guid_b, c.x, c.y, c.z, c.note) for c in res.clashes]
+        table(ws, headers, rows, [9, 34, 10, 12, 30, 22, 30, 24, 30, 22, 30, 24, 13, 13, 9, 30], start_row=start)
+        if res.clash_messages:
+            wl = wb.create_sheet("Nhật ký xung đột")
+            wl.column_dimensions["A"].width = 120
+            for m_ in res.clash_messages:
+                wl.append([m_])
+
     # ---- AI phân loại
     if res.ai_suggestions:
         ws = wb.create_sheet("AI đề xuất lớp IFC")
@@ -200,6 +222,15 @@ def export_html(res: CheckResult, path: str, max_issues: int = 20000) -> None:
         for i in issues)
     more = (f"<p class=muted>Hiển thị {max_issues} / {len(res.issues)} lỗi. Xem đầy đủ trong file Excel.</p>"
             if len(res.issues) > max_issues else "")
+    clash_html = ""
+    if res.clashes:
+        crow = "".join(
+            f"<tr><td>{e(c.id)}</td><td>{e(c.test)}</td><td class=n>{c.depth:.3f}</td><td>{e(c.class_a)}<br><small>{e(c.name_a)}</small></td>"
+            f"<td>{e(c.class_b)}<br><small>{e(c.name_b)}</small></td><td class=n>{c.x:.2f}, {c.y:.2f}, {c.z:.2f}</td></tr>"
+            for c in res.clashes[:5000])
+        clash_html = (f"<section><h2>Xung đột ({len(res.clashes):,})</h2><div class=tbl><table><tr><th>Mã</th><th>Phép thử</th>"
+                      f"<th>Độ sâu (m)</th><th>Đối tượng A</th><th>Đối tượng B</th><th>Vị trí X, Y, Z</th></tr>{crow}"
+                      "</table></div></section>")
     ai = (f"<section><h2>Nhận xét (AI hỗ trợ — cần chuyên gia xác nhận)</h2><div class=ai>{e(res.ai_summary)}</div></section>"
           if res.ai_summary else "")
     doc = f"""<!doctype html><html lang="vi"><head><meta charset="utf-8">
@@ -236,8 +267,10 @@ code{{font-size:11px}}
 <div class=card><b style="color:#c0392b">{t['errors']:,}</b><span>Lỗi bắt buộc</span></div>
 <div class=card><b style="color:#b7791f">{t['warnings']:,}</b><span>Cảnh báo</span></div>
 <div class=card><b>{t['proxies']:,}</b><span>IfcBuildingElementProxy</span></div>
+<div class=card><b style="color:#a21caf">{len(res.clashes):,}</b><span>Xung đột</span></div>
 </div>
 {ai}
+{clash_html}
 <section><h2>Theo file</h2><div class=tbl><table><tr><th>File</th><th>Schema</th><th>Kiểm tra</th><th>Phần tử con bỏ qua</th>
 <th>Proxy</th><th>Tỷ lệ đạt</th><th>Lỗi</th><th>Cảnh báo</th><th>Ghi chú</th></tr>{files_rows}</table></div></section>
 <section><h2>Theo quy tắc</h2><div class=tbl><table><tr><th>File</th><th>Mã</th><th>Yêu cầu</th><th>Mức độ</th>

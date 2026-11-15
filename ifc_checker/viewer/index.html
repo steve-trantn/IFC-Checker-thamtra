@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<title>Trình xem 3D</title>
+<style>html,body{margin:0;height:100%;background:#eef1f5}#v{position:absolute;inset:0}</style>
+<style id="ttv-css"></style>
+<script src="three.min.js"></script>
+<script src="viewer.js"></script>
+</head>
+<body>
+<div id="v"></div>
+<script>
+/* Streamlit component (giao tiếp thủ công theo giao thức streamlit-component-lib, không cần build) */
+document.getElementById("ttv-css").textContent = ThamTraViewer.CSS;
+function send(type, data) {
+  window.parent.postMessage(Object.assign({ isStreamlitMessage: true, type: type }, data || {}), "*");
+}
+let viewer = null, loadedKey = null, loading = false, latest = null, appliedSeq = null, height = 0;
+
+function applyFocus(a) {
+  if (!viewer || !viewer.meta || !a) return;
+  const seq = JSON.stringify([a.focus_ids || null, a.focus_clash || null]);
+  if (seq === appliedSeq) return;
+  appliedSeq = seq;
+  if (a.focus_clash) viewer.focusClash(a.focus_clash);
+  else if (a.focus_ids && a.focus_ids.length) viewer.focus(a.focus_ids, { silent: true });
+}
+
+async function onRender(a) {
+  latest = a;
+  if (a.height && a.height !== height) {
+    height = a.height;
+    document.getElementById("v").style.height = height + "px";
+    send("streamlit:setFrameHeight", { height: height });
+  }
+  if (!viewer) {
+    viewer = new ThamTraViewer(document.getElementById("v"), {
+      onPick: function (p) {
+        send("streamlit:setComponentValue", { value: Object.assign({ t: Date.now() }, p), dataType: "json" });
+      },
+    });
+  }
+  if (a.scene_key && a.scene_key !== loadedKey && !loading) {
+    loading = true;
+    try {
+      const res = await Promise.all([
+        fetch(a.meta_url).then(function (r) { if (!r.ok) throw new Error("meta " + r.status); return r.json(); }),
+        fetch(a.data_url).then(function (r) { if (!r.ok) throw new Error("data " + r.status); return r.arrayBuffer(); }),
+      ]);
+      viewer.load(res[0], res[1]);
+      loadedKey = a.scene_key;
+      appliedSeq = null;
+    } catch (e) {
+      viewer.status.textContent = "Không tải được mô hình: " + e;
+    }
+    loading = false;
+    if (latest && latest.scene_key !== loadedKey) return onRender(latest);
+  }
+  applyFocus(latest);
+}
+
+window.addEventListener("message", function (ev) {
+  const d = ev.data;
+  if (d && d.type === "streamlit:render") onRender(d.args || {});
+});
+send("streamlit:componentReady", { apiVersion: 1 });
+send("streamlit:setFrameHeight", { height: 620 });
+</script>
+</body>
+</html>

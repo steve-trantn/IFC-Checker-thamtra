@@ -18,3 +18,6 @@ venv/
 # Bí mật
 .streamlit/secrets.toml
 .env
+
+# Đệm trình xem 3D (bản web)
+ifc_checker/viewer/_cache/

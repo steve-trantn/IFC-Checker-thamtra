@@ -98,6 +98,8 @@ class CheckResult:
     inventory: list[tuple] = field(default_factory=list)      # (file, class, pset, prop, present, filled, total, samples)
     ai_suggestions: list[dict] = field(default_factory=list)
     ai_summary: str = ""
+    clashes: list = field(default_factory=list)          # list[clash.Clash]
+    clash_messages: list[str] = field(default_factory=list)
 
     def totals(self) -> dict:
         c = Counter(i.severity for i in self.issues)
@@ -455,7 +457,7 @@ def run_checks(models: list[ModelInfo], ruleset: RuleSet, options: CheckOptions 
             proxies=sum(1 for r in checked_elements if r.ifc_class == "IfcBuildingElementProxy"),
             passed_elements=len(checked_ids - elements_failed),
             errors=c.get("ERROR", 0), warnings=c.get("WARNING", 0), infos=c.get("INFO", 0),
-            error=model.error,
+            error="; ".join(x for x in [model.error] + model.warnings if x),
         ))
         res.issues.extend(file_issues)
         res.rule_stats.extend(stats.values())

@@ -7,6 +7,7 @@ Dùng chung bộ máy kiểm tra với bản desktop (ifc_checker/).
 from __future__ import annotations
 
 import os
+import time
 import sys
 import tempfile
 from dataclasses import asdict, fields
@@ -90,8 +91,37 @@ with st.sidebar:
 st.title(f"🏗️ {APP_NAME}")
 st.caption("Kiểm tra tự động thông tin phi hình học, yêu cầu BEP/LOIN và chủng loại IFC cho hồ sơ mô hình BIM.")
 
-tab_files, tab_rules, tab_res, tab_stats, tab_ai = st.tabs(
-    ["1. Hồ sơ IFC", "2. Quy tắc BEP", "3. Kết quả", "4. Thống kê", "5. Trợ lý AI"])
+tab_files, tab_rules, tab_res, tab_clash, tab_stats, tab_ai = st.tabs(
+    ["1. Hồ sơ IFC", "2. Quy tắc BEP", "3. Kết quả", "4. Xung đột & 3D", "5. Thống kê", "6. Trợ lý AI"])
+
+
+def _viewer_panel(where: str, result, issue_row=None, issue_model=None, clash_id: str = ""):
+    """Khung xem 3D dùng chung cho tab Kết quả và tab Xung đột."""
+    from ifc_checker.viewer_data import objects_for
+    from ifc_checker.web_viewer import ensure_scene, viewer
+
+    all_models = [m for m in ss.models.values() if not m.error]
+    names = [m.file_name for m in all_models]
+    default = names if len(names) <= 4 else ([issue_model.file_name] if issue_model else names[:1])
+    pick_files = st.multiselect("File hiển thị trong 3D", names, default=default, key=f"files3d_{where}",
+                                help="Mô hình lớn: chọn ít file để hiển thị nhanh hơn.")
+    models = [m for m in all_models if m.file_name in pick_files]
+    if not models:
+        st.info("Chọn ít nhất 1 file để hiển thị.")
+        return
+    sc = ensure_scene(f"scene_{where}", models, result, ss.get("clash_run"))
+    focus = []
+    if issue_row is not None and issue_model is not None:
+        focus = objects_for(sc["meta"], issue_row["File"], int(issue_row["#"]), issue_model)
+        if not focus:
+            st.caption("Đối tượng đang chọn không có hình học (hoặc file chưa được chọn hiển thị).")
+    picked = viewer(sc, focus_ids=focus, focus_clash=clash_id, height=620, key=f"viewer_{where}")
+    st.caption(f"{len(sc['meta']['objects']):,} đối tượng 3D · {sc['size_mb']:.1f} MB")
+    if picked:
+        errs = [i for i in (result.issues if result else []) if i.file == picked.get("file")
+                and i.step_id == picked.get("step")]
+        st.markdown(f"**Đã chọn trong 3D:** `{picked.get('guid')}` · {picked.get('file')} · #{picked.get('step')}" +
+                    ("".join(f"\n- [{i.rule_id}] {i.message}" for i in errs[:10]) if errs else "  \n_Không có lỗi_"))
 
 # ------------------------------------------------------------------ 1. files
 with tab_files:
@@ -104,7 +134,7 @@ with tab_files:
             if key not in ss.models:
                 with st.spinner(f"Đang đọc {up.name} ..."):
                     ss.models[key] = load_model(_save_upload(up))
-    for k in [k for k in ss.models if k not in current]:  # file đã bị gỡ khỏi ô tải lên
+    for k in [k for k in ss.models if k not in current and not ss.get("_keep_models")]:  # file đã gỡ khỏi ô tải lên
         del ss.models[k]
     if ss.models:
         rows = []
@@ -112,7 +142,8 @@ with tab_files:
             rows.append({"File": m.file_name, "Schema": m.schema, "Phần mềm xuất": m.application,
                          "Dự án": m.project_name, "Đối tượng": len(m.elements), "Phần tử con": m.part_count,
                          "Proxy": sum(1 for r in m.elements if r.ifc_class == "IfcBuildingElementProxy"),
-                         "Trạng thái": m.error or f"OK ({m.load_seconds:.1f}s)"})
+                         "Trạng thái": m.error or ("⚠ " + "; ".join(m.warnings) if m.warnings
+                                                   else f"OK ({m.load_seconds:.1f}s)")})
         st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
     else:
         st.info("Chưa có file IFC. Kéo thả file vào ô phía trên.")
@@ -256,16 +287,25 @@ with tab_res:
             if q:
                 mask = view.astype(str).apply(lambda c: c.str.contains(q, case=False, regex=False)).any(axis=1)
                 view = view[mask]
-            st.caption(f"{len(view):,} dòng · chọn 1 dòng để xem toàn bộ thông tin đối tượng")
-            ev = st.dataframe(view, hide_index=True, width="stretch", height=420,
-                              on_select="rerun", selection_mode="single-row", key="issues_df")
+            show3d = st.toggle("🧊 Hiện mô hình 3D bên cạnh (bấm 1 dòng lỗi để phóng tới đối tượng)",
+                               key="show3d_res")
+            left, right = st.columns([1.1, 1]) if show3d else (st.container(), None)
+            with left:
+                st.caption(f"{len(view):,} dòng · chọn 1 dòng để xem toàn bộ thông tin đối tượng")
+                ev = st.dataframe(view, hide_index=True, width="stretch", height=600 if show3d else 420,
+                                  on_select="rerun", selection_mode="single-row", key="issues_df")
             rows = ev.selection.rows if ev and ev.selection else []
+            rec = sel_model = r = None
             if rows:
                 r = view.iloc[rows[0]]
-                rec = None
                 for m in ss.models.values():
                     if m.file_name == r["File"]:
+                        sel_model = m
                         rec = next((x for x in m.records if x.step_id == int(r["#"])), None)
+            if right is not None:
+                with right:
+                    _viewer_panel("res", res, r, sel_model)
+            if rows:
                 if rec:
                     with st.expander(f"🔎 {rec.ifc_class} - {rec.display_name()}", expanded=True):
                         a, b = st.columns(2)
@@ -282,7 +322,103 @@ with tab_res:
                         if prows:
                             st.dataframe(pd.DataFrame(prows), hide_index=True, width="stretch")
 
-# ------------------------------------------------------------------ 4. stats
+# ------------------------------------------------------------------ 4. clash & 3D
+with tab_clash:
+    from ifc_checker.bcf import export_bcf
+    from ifc_checker.clash import (ClashTest, default_tests, fcl_available, run_clash, tests_from_records,
+                                   tests_to_records)
+    from ifc_checker.engine import CheckResult
+
+    models_ok = [m for m in ss.models.values() if not m.error]
+    if not fcl_available():
+        st.error("Chưa cài thư viện kiểm tra va chạm. Chạy: pip install python-fcl")
+    elif not models_ok:
+        st.info("Tải file IFC ở tab 1 trước.")
+    else:
+        st.caption("Mỗi phép thử so sánh nhóm A với nhóm B (lọc theo tên file + lớp IFC). Dung sai: bỏ qua va chạm có "
+                   "độ sâu xuyên nhỏ hơn giá trị này (m). Lưu ý: với bề mặt (địa hình, mặt đường) độ sâu chỉ mang tính "
+                   "tham khảo. Nên bỏ các cặp tiếp xúc theo thiết kế (vd hố ga × mặt đường) theo ma trận va chạm của BEP.")
+        sig = tuple(sorted(m.file_name for m in models_ok))
+        if ss.get("clash_sig") != sig:
+            ss.clash_tests = default_tests(models_ok)
+            ss.clash_sig = sig
+        tdf = st.data_editor(
+            pd.DataFrame(tests_to_records(ss.clash_tests), columns=[f for f in ClashTest.__dataclass_fields__]),
+            num_rows="dynamic", hide_index=True, width="stretch", key="clash_editor",
+            column_config={
+                "name": "Tên phép thử", "enabled": st.column_config.CheckboxColumn("Bật"),
+                "a_file": "Nhóm A - lọc tên file (regex)", "a_class": "Nhóm A - lớp IFC",
+                "b_file": "Nhóm B - lọc tên file (regex)", "b_class": "Nhóm B - lớp IFC",
+                "tolerance": st.column_config.NumberColumn("Dung sai (m)", min_value=0.0, step=0.01, format="%.3f"),
+                "max_results": st.column_config.NumberColumn("Tối đa", min_value=1, step=100),
+            })
+        b1, b2, b3 = st.columns([1.2, 1.2, 3])
+        if b2.button("Tạo lại phép thử theo từng cặp file"):
+            ss.clash_tests = default_tests(models_ok)
+            st.rerun()
+        if b1.button("▶ Chạy kiểm tra xung đột", type="primary"):
+            tests = tests_from_records(tdf.to_dict("records"))
+            ss.clash_tests = tests
+            bar = st.progress(0.0, text="Đang chuẩn bị...")
+
+            def _prog(d, t, msg):
+                bar.progress(min(1.0, d / max(t, 1)), text=msg)
+            ss.clash_run = run_clash(models_ok, tests, progress=_prog)
+            bar.empty()
+            if ss.result is not None:
+                ss.result.clashes = ss.clash_run.clashes
+                ss.result.clash_messages = ss.clash_run.messages
+        run = ss.get("clash_run")
+        if run is not None:
+            cl = run.clashes
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Tổng xung đột", f"{len(cl):,}")
+            m2.metric("Phép thử có xung đột", len({c.test for c in cl}))
+            m3.metric("Độ sâu lớn nhất (m)", f"{max((c.depth for c in cl), default=0):.3f}")
+            with st.expander("Nhật ký chạy"):
+                st.text("\n".join(run.messages))
+            if cl:
+                cdf = pd.DataFrame([{"Mã": c.id, "Phép thử": c.test, "Độ sâu (m)": c.depth, "Lớp A": c.class_a,
+                                     "Tên A": c.name_a, "Lớp B": c.class_b, "Tên B": c.name_b,
+                                     "X": c.x, "Y": c.y, "Z": c.z, "File A": c.file_a, "File B": c.file_b}
+                                    for c in cl])
+                fc1, fc2 = st.columns([2, 1])
+                sel_t = fc1.multiselect("Lọc phép thử", sorted(cdf["Phép thử"].unique()))
+                min_d = fc2.number_input("Độ sâu tối thiểu (m)", min_value=0.0, value=0.0, step=0.05)
+                cview = cdf
+                if sel_t:
+                    cview = cview[cview["Phép thử"].isin(sel_t)]
+                if min_d:
+                    cview = cview[cview["Độ sâu (m)"] >= min_d]
+                show3d_c = st.toggle("🧊 Hiện mô hình 3D bên cạnh", value=True, key="show3d_clash")
+                lc, rc = st.columns([1.1, 1]) if show3d_c else (st.container(), None)
+                with lc:
+                    st.caption(f"{len(cview):,} xung đột · bấm 1 dòng để phóng tới vị trí")
+                    cev = st.dataframe(cview, hide_index=True, width="stretch", height=620,
+                                       on_select="rerun", selection_mode="single-row", key="clash_df")
+                crow = cev.selection.rows if cev and cev.selection else []
+                cid = cview.iloc[crow[0]]["Mã"] if crow else ""
+                if rc is not None:
+                    with rc:
+                        _viewer_panel("clash", ss.result, clash_id=cid)
+                d1, d2, _ = st.columns([1, 1, 3])
+                sel_cl = [c for c in cl if c.id in set(cview["Mã"])]
+                bp = os.path.join(ss.tmpdir, "XungDot.bcfzip")
+                export_bcf(sel_cl, bp)
+                with open(bp, "rb") as f:
+                    d1.download_button(f"⬇ BCF ({len(sel_cl):,} xung đột)", f.read(), "XungDot.bcfzip",
+                                       help="Mở trong Navisworks / BIMcollab / Solibri / Revizto")
+                xp = os.path.join(ss.tmpdir, "XungDot.xlsx")
+                export_excel(CheckResult(started=time.strftime("%Y-%m-%d %H:%M:%S"), ruleset_source="(chỉ xung đột)",
+                                         clashes=sel_cl, clash_messages=run.messages), xp)
+                with open(xp, "rb") as f:
+                    d2.download_button("⬇ Excel xung đột", f.read(), "XungDot.xlsx")
+        else:
+            st.markdown("**Xem mô hình 3D** (chưa chạy xung đột)")
+            if st.toggle("Hiện mô hình 3D", key="show3d_only"):
+                _viewer_panel("only", ss.result)
+
+# ------------------------------------------------------------------ 5. stats
 with tab_stats:
     if res is None:
         st.info("Chưa có kết quả.")
@@ -304,7 +440,7 @@ with tab_stats:
                     column_config={"Tỷ lệ điền": st.column_config.ProgressColumn(
                         "Tỷ lệ điền", min_value=0, max_value=100, format="%.0f%%")})
 
-# ------------------------------------------------------------------ 5. AI
+# ------------------------------------------------------------------ 6. AI
 with tab_ai:
     st.caption("Chỉ gửi dữ liệu tóm tắt (tên lớp, tên loại, thuộc tính, thống kê) lên Claude - không gửi file IFC. "
                "Hãy đảm bảo phù hợp quy định bảo mật của dự án.")

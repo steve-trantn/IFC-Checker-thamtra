@@ -101,6 +101,7 @@ class ModelInfo:
     application: str = ""
     records: list[ElementRecord] = field(default_factory=list)
     error: str = ""
+    warnings: list[str] = field(default_factory=list)   # lỗi chất lượng file (không chặn kiểm tra)
     load_seconds: float = 0.0
     ifc: object = field(repr=False, default=None)
 
@@ -247,6 +248,15 @@ def load_model(path: str, progress=None, cancel=None) -> ModelInfo:
     try:
         apps = f.by_type("IfcApplication")
         info.application = " / ".join(sorted({_s(a.ApplicationFullName) for a in apps if a.ApplicationFullName}))
+    except Exception:
+        pass
+
+    try:
+        bad = sum(1 for r in f.by_type("IfcShapeRepresentation")
+                  if any(i.is_a("IfcStyledItem") for i in (r.Items or ())))
+        if bad:
+            info.warnings.append(f"{bad} biểu diễn hình học chứa IfcStyledItem trong danh sách Items (lỗi xuất "
+                                 "IFC - nhiều phần mềm sẽ không hiển thị được các đối tượng này)")
     except Exception:
         pass
 
