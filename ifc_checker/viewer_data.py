@@ -15,7 +15,7 @@ import json
 import numpy as np
 
 from .engine import select_records
-from .geometry import common_origin, compute_meshes, descendants
+from .geometry import common_origin, compute_many, descendants
 from .model_loader import ModelInfo
 
 SEV_CODE = {"ERROR": 2, "WARNING": 1, "INFO": 0}
@@ -24,10 +24,7 @@ SEV_CODE = {"ERROR": 2, "WARNING": 1, "INFO": 0}
 def build_scene(models: list[ModelInfo], result=None, clash_run=None, progress=None, cancel=None):
     """Trả về (bytes, meta dict). Tự dựng hình cho các model chưa có mesh."""
     models = [m for m in models if not m.error or m.records]
-    for i, m in enumerate(models):
-        if progress:
-            progress(i, len(models), f"Dựng hình 3D {m.file_name} ({i + 1}/{len(models)})...")
-        compute_meshes(m, cancel=cancel)
+    compute_many(models, progress, cancel)     # song song, mỗi file 1 tiến trình con
     origin = common_origin(models)
 
     # trạng thái theo (file, step_id)
@@ -86,7 +83,7 @@ def build_scene(models: list[ModelInfo], result=None, clash_run=None, progress=N
                     parent = by_guid.get(rec.parent_guid)
                     if parent:
                         name = f"{parent.display_name()} › #{sid}"
-            v = (mesh.verts - origin).astype(np.float32)
+            v = mesh.relative_to(origin)
             f = (mesh.faces.astype(np.int64) + vbase).astype(np.uint32)
             bb = np.vstack([v.min(axis=0), v.max(axis=0)]).reshape(-1)
             oi = len(objects)

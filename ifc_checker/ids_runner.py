@@ -19,7 +19,8 @@ def run_ids(ids_path: str, model: ModelInfo, skip_ids: set | None = None):
     from ifctester import ids as ids_mod
 
     spec_doc = ids_mod.open(ids_path)
-    spec_doc.validate(model.ifc)
+    from .model_loader import reopen_ifc
+    spec_doc.validate(reopen_ifc(model))
     part_ids = skip_ids or set()
     rec_by_id = {r.step_id: r for r in model.records}
 

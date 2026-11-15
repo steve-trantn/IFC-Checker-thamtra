@@ -21,7 +21,7 @@ from dataclasses import asdict, dataclass, field, fields
 
 import numpy as np
 
-from .geometry import Mesh, common_origin, compute_meshes
+from .geometry import Mesh, common_origin, compute_many
 from .model_loader import ElementRecord, ModelInfo
 from .textnorm import norm, split_list, strip_accents
 
@@ -297,12 +297,9 @@ def run_clash(models: list[ModelInfo], tests: list[ClashTest], progress=None, ca
                 if not m.error and (rx is None or rx.search(strip_accents(m.file_name))):
                     need.add(m.path)
     todo = [m for m in models if m.path in need]
-    for i, m in enumerate(todo):
-        if cancel and cancel():
-            return run
-        if progress:
-            progress(i, len(todo), f"Dựng hình 3D {m.file_name} ({i + 1}/{len(todo)})...")
-        compute_meshes(m, cancel=cancel)
+    compute_many(todo, progress, cancel)
+    if cancel and cancel():
+        return run
     origin = common_origin(todo)
     guid_maps = {m.path: {r.guid: r for r in m.records} for m in todo}
     fcl_cache: dict[tuple, tuple] = {}

@@ -49,6 +49,14 @@ Ma trận mẫu `templates/Ma_tran_va_cham_mau.xlsx` (24 phép thử, nhóm A1�
 
 Nhập API key Claude trong *Cài đặt* (chỉ giữ trong bộ nhớ phiên) hoặc đặt biến môi trường `ANTHROPIC_API_KEY` trên máy chủ. AI chỉ nhận kết quả truy vấn tóm tắt (tên lớp, tên, thuộc tính, thống kê), không nhận file IFC. Kết luận thẩm tra do chuyên gia quyết định.
 
+## Hiệu năng
+
+Đo với 10 file KCN Thịnh Minh (60 MB IFC, 13.360 đối tượng, 2,3 triệu tam giác): mở trên web **≈ 27 giây** (trước tối ưu: > 5 phút), RAM máy chủ ≈ 350 MB.
+
+- Dựng hình bằng nhân **CGAL/hybrid** mã nguồn mở có sẵn trong IfcOpenShell thay cho OpenCASCADE: nhanh 8–60 lần với mô hình dạng lưới tam giác, hình học như nhau (tự quay về OpenCASCADE nếu cần). Đổi bằng biến môi trường `GEOM_LIBRARY`.
+- Dựng hình ở **tiến trình con, song song nhiều file**; RAM của nhân hình học được thu hồi khi xong.
+- Giải phóng file IFC khỏi RAM sau khi đọc thuộc tính (mở lại từ đĩa khi chạy IDS); lưu toạ độ float32; dữ liệu 3D nén sẵn gửi xuống trình duyệt.
+
 ## Đăng nhập bằng Google (khi đưa lên mạng)
 
 Mặc định tắt (dùng nội bộ). Để bật:

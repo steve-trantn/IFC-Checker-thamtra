@@ -11,13 +11,14 @@ from collections import Counter
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from ifc_checker import APP_NAME, AUTHOR, AUTHOR_PHONE, __version__
 from ifc_checker.clash import (MODE_HELP, MODE_VN, MODES, default_matrix, default_tests, fcl_available,
                                load_matrix, run_clash, save_matrix, tests_from_records, tests_to_records)
 from ifc_checker.engine import CheckOptions, CheckResult, run_checks
-from ifc_checker.model_loader import load_model
+from ifc_checker.model_loader import load_model, release_ifc
 from ifc_checker.report import export_excel, export_html
 from ifc_checker.rules import (CONDITIONS, SEVERITIES, TARGETS, Rule, default_ruleset, load_rules, save_rules)
 from ifc_checker.textnorm import value_to_str
@@ -31,6 +32,7 @@ VIEWER = os.path.join(os.path.dirname(ROOT), "ifc_checker", "viewer")
 app = FastAPI(title=APP_NAME, version=__version__)
 app.mount("/static", StaticFiles(directory=os.path.join(ROOT, "static")), name="static")
 app.mount("/viewer", StaticFiles(directory=VIEWER), name="viewer")
+app.add_middleware(GZipMiddleware, minimum_size=2048, compresslevel=5)   # nén meta/hình học gửi xuống trình duyệt
 store = WorkspaceStore()
 auth = Auth()
 PUBLIC = ("/login", "/auth/", "/static/", "/viewer/", "/favicon")
@@ -199,6 +201,8 @@ async def upload(request: Request, files: list[UploadFile] = File(...)):
         for i, p in enumerate(paths):
             progress(i, len(paths), f"Đang đọc {os.path.basename(p)} ({i + 1}/{len(paths)})")
             m = load_model(p)
+            if os.environ.get("KEEP_IFC", "0") != "1":
+                release_ifc(m)          # giữ thuộc tính, bỏ file IFC khỏi RAM (mở lại khi cần)
             ws.models[m.file_name] = m
         ws.scene_dirty = True
         return len(paths)
@@ -287,10 +291,16 @@ def scene_build(request: Request):
     models, res, run = ws.ok_models(), ws.result, ws.clash_run
 
     def work(progress):
+        import gzip
+        import json as _json
         data, meta = build_scene(models, res, run, progress)
-        ws.scene = (data, meta, scene_key(data, meta))
+        key = scene_key(data, meta)
+        progress(1, 1, "Nén dữ liệu 3D...")
+        # nén 1 lần, phục vụ nhiều lần; không giữ bản meta dạng đối tượng Python (tốn RAM)
+        ws.scene = (gzip.compress(data, 5), gzip.compress(_json.dumps(meta, ensure_ascii=False).encode(), 6), key)
+        del data, meta
         ws.scene_dirty = False
-        return ws.scene[2]
+        return key
     return ws.start_job("Dựng mô hình 3D", work).to_dict()
 
 
@@ -299,7 +309,7 @@ def scene_meta(request: Request):
     ws = ws_of(request)
     if ws.scene is None:
         raise HTTPException(404, "Chưa dựng cảnh 3D")
-    return JSONResponse(ws.scene[1])
+    return Response(ws.scene[1], media_type="application/json", headers={"Content-Encoding": "gzip"})
 
 
 @app.get("/api/scene/data")
@@ -307,7 +317,7 @@ def scene_data(request: Request):
     ws = ws_of(request)
     if ws.scene is None:
         raise HTTPException(404, "Chưa dựng cảnh 3D")
-    return Response(ws.scene[0], media_type="application/octet-stream")
+    return Response(ws.scene[0], media_type="application/octet-stream", headers={"Content-Encoding": "gzip"})
 
 
 # ====================================================================== quy tắc

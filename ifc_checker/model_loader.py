@@ -15,6 +15,30 @@ from .textnorm import norm, value_to_str
 EXCLUDED_ELEMENT_CLASSES = ("IfcFeatureElement", "IfcVirtualElement")
 
 
+def _patch_schema_cache():
+    """ifcopenshell.file.schema dựng lại chuỗi bằng regex mỗi lần gọi; các hàm util gọi hàng chục nghìn lần
+    khi đọc thuộc tính (tốn vài giây/file). Lưu đệm theo schema_identifier - kết quả không đổi."""
+    try:
+        orig = ifcopenshell.file.schema.fget
+    except AttributeError:
+        return
+    if getattr(orig, "_tt_cached", False):
+        return
+    cache = {}
+
+    def fast(self):
+        sid = self.schema_identifier
+        v = cache.get(sid)
+        if v is None:
+            v = cache[sid] = orig(self)
+        return v
+    fast._tt_cached = True
+    ifcopenshell.file.schema = property(fast)
+
+
+_patch_schema_cache()
+
+
 @dataclass
 class ElementRecord:
     file: str
@@ -40,6 +64,7 @@ class ElementRecord:
     psets: dict[str, dict[str, object]]
     entity: object = field(repr=False, default=None)
     _index: dict | None = field(repr=False, default=None)
+    schema: str = ""
 
     # --- tra cứu thuộc tính theo tên đã chuẩn hoá ---
     def index(self) -> dict:
@@ -57,6 +82,8 @@ class ElementRecord:
                 return bool(self.entity.is_a(cls))
             except Exception:
                 pass
+        if self.schema:
+            return schema_is_a(self.schema, self.ifc_class, cls)
         return norm(self.ifc_class) == norm(cls)
 
     def attribute(self, name: str):
@@ -116,6 +143,48 @@ class ModelInfo:
     @property
     def part_count(self) -> int:
         return sum(1 for r in self.records if r.is_part)
+
+
+_ISA_CACHE: dict[tuple, bool] = {}
+
+
+def schema_is_a(schema: str, cls: str, parent: str) -> bool:
+    """Kiểm tra kế thừa lớp IFC theo định nghĩa schema (không cần giữ file IFC trong bộ nhớ)."""
+    key = (schema, cls, parent.strip().lower())
+    hit = _ISA_CACHE.get(key)
+    if hit is not None:
+        return hit
+    ok = cls.lower() == key[2]
+    if not ok:
+        try:
+            import ifcopenshell.ifcopenshell_wrapper as w
+            s = schema.upper()
+            name = "IFC4X3_ADD2" if s.startswith("IFC4X3") else ("IFC2X3" if s.startswith("IFC2X3") else "IFC4")
+            d = w.schema_by_name(name).declaration_by_name(cls)
+            while d is not None and not ok:
+                ok = d.name().lower() == key[2]
+                d = d.supertype() if hasattr(d, "supertype") else None
+        except Exception:
+            ok = False
+    _ISA_CACHE[key] = ok
+    return ok
+
+
+def release_ifc(model) -> None:
+    """Giải phóng file IFC khỏi bộ nhớ sau khi đã đọc xong thuộc tính (tiết kiệm ~3 lần dung lượng file).
+    Các bước cần file (IDS, dựng hình dự phòng) sẽ mở lại từ model.path."""
+    for r in model.records:
+        r.entity = None
+    model.ifc = None
+    import gc
+    gc.collect()
+
+
+def reopen_ifc(model):
+    """Trả về đối tượng file IFC (mở lại từ đĩa nếu đã giải phóng)."""
+    if model.ifc is not None:
+        return model.ifc
+    return ifcopenshell.open(model.path)
 
 
 def _s(v) -> str:
@@ -287,5 +356,7 @@ def load_model(path: str, progress=None, cancel=None) -> ModelInfo:
                 has_geometry=False, materials=[], classifications=[], psets={}, entity=e))
         if progress and (i % 200 == 0 or i == total - 1):
             progress(i + 1, total, f"{os.path.basename(path)}: {i + 1}/{total} đối tượng")
+    for r in info.records:   # để kiểm tra kế thừa lớp IFC khi đã giải phóng file
+        r.schema = info.schema
     info.load_seconds = time.time() - t0
     return info

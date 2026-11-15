@@ -436,7 +436,7 @@ def run_checks(models: list[ModelInfo], ruleset: RuleSet, options: CheckOptions 
                 progress(i + 1, total, f"Kiểm tra {model.file_name}: {i + 1}/{total}")
 
         # Chạy IDS nếu có
-        if ruleset.ids_path and model.ifc is not None:
+        if ruleset.ids_path and model.records:
             from .ids_runner import run_ids
             try:
                 skip_ids = {r.step_id for r in model.records if r.kind == "element"} - {r.step_id for r in recs}
