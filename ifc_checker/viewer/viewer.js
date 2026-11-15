@@ -53,6 +53,8 @@
       const c = this.c;
       c.classList.add("ttv");
       c.innerHTML = "";
+      // không hiện menu chuột phải của trình duyệt trong khung 3D (kể cả trên menu / bảng thông tin của phần mềm)
+      c.addEventListener("contextmenu", (e) => e.preventDefault());
       this.canvasWrap = el("div", { class: "ttv-canvas" });
       c.appendChild(this.canvasWrap);
       const bar = el("div", { class: "ttv-bar" });

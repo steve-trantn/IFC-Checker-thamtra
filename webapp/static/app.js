@@ -89,6 +89,12 @@ async function init() {
 }
 
 function bindUI() {
+  // khung làm việc chỉ dùng menu của phần mềm; ô nhập chữ vẫn giữ menu trình duyệt (dán / sao chép)
+  document.addEventListener("contextmenu", (e) => {
+    const t = e.target;
+    if (t.closest && t.closest("input, textarea, [contenteditable='true']")) return;
+    if (t.closest && t.closest("#workspace, .ribbon, .titlebar, .statusbar, .modal")) e.preventDefault();
+  });
   const openFiles = async (files) => {
     files = files.filter((f) => f.name.toLowerCase().endsWith(".ifc"));
     if (!files.length) return toast("Chọn file .ifc", true);
