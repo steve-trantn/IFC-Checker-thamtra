@@ -25,3 +25,6 @@ ifc_checker/viewer/_cache/
 # Cấu hình bí mật & nhật ký truy cập
 config.env
 logs/
+
+# Dữ liệu dự án đã lưu trên máy chủ
+data/

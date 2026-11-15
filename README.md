@@ -18,12 +18,25 @@ run_web.bat            :: mở http://localhost:8000
 | Khu vực | Nội dung |
 |---|---|
 | Thanh công cụ | Mở IFC · Sức khỏe mô hình · Quy tắc BEP · ▶ Chạy kiểm tra · Ma trận va chạm · Chạy xung đột · Tô màu kết quả · Cô lập đối tượng lỗi · Hỏi mô hình · Báo cáo Excel/HTML |
-| Giữa | Mô hình 3D (tô màu đỏ lỗi / vàng cảnh báo / xanh đạt, x-quang đối tượng bị che, điểm xung đột) |
+| Giữa | Mô hình 3D (tô màu đỏ lỗi / vàng cảnh báo / xanh đạt, x-quang đối tượng bị che, điểm xung đột, LOD tự động). Chọn: nháy, Ctrl+nháy, Chọn vùng (Alt+kéo); H ẩn · I cô lập · U hiện tất cả · Z phóng tới · F toàn cảnh; chuột phải: menu |
 | Trái | **Thuộc tính** đối tượng đang chọn (thuộc tính gốc, Pset, lỗi, xung đột) · **Trình duyệt dự án** (file → lớp IFC: tô sáng / cô lập) |
 | Dưới | Sức khỏe mô hình · Quy tắc BEP (sửa trực tiếp) · Kết quả · Xung đột · Thống kê thuộc tính · Danh sách AI · Nhật ký |
 | Phải | **Hỏi mô hình**: trợ lý AI dùng công cụ của phần mềm để truy vấn, đếm trực tiếp trên mô hình rồi trả lời; mỗi kết quả có nút *Danh sách / Highlight 3D / Cô lập* |
 
 Bấm 1 dòng lỗi hoặc xung đột → mô hình bay tới đối tượng; nháy chọn trong 3D → hiện thuộc tính.
+
+## Dự án
+
+**💾 Lưu** / **Lưu thành...** lưu file IFC, bộ quy tắc, ma trận va chạm, kết quả kiểm tra, xung đột, đối chiếu bản vẽ và cài đặt thành dự án trên máy chủ (thư mục `data/`, mỗi tài khoản riêng). **🗂️ Dự án** để mở lại, tải về file `.ttproj` (chuyển máy khác) hoặc nhập file `.ttproj`.
+
+## Đối chiếu mô hình với bản vẽ 2D
+
+Tự động hoá cách đối chiếu "bản vẽ phê duyệt ↔ IFC": nạp bản vẽ mặt bằng **DXF** (hoặc DWG nếu máy chủ có ODA File Converter / LibreDWG), cùng hệ toạ độ VN-2000 với mô hình.
+
+- Ký hiệu trên bản vẽ (block / đường tròn trên layer chọn) được gán **nhãn** gần nhất (tự học hướng đặt nhãn, ghép 1-1) → đọc **tên, cao độ mặt, cao độ đáy** ("CĐM / CĐ mặt / TN…", "CĐĐ / Đáy cống…").
+- Đối tượng mô hình (vd hố ga: lớp IFC + lọc file + từ khoá tên) lấy cao độ từ thuộc tính (hoặc hình học).
+- **Ghép theo vị trí** cặp gần nhất hai chiều trong bán kính → thống kê: ghép được / chỉ có trên bản vẽ / chỉ có trong mô hình / khác tên, |Δ mặt| và |Δ đáy| (>0,1 / 0,3 / 0,5 / 1,0 m, trung vị), lệch vị trí.
+- Nét bản vẽ phủ lên mô hình 3D, điểm đánh dấu tô màu theo trạng thái; bấm 1 dòng → bay tới vị trí. Xuất Excel.
 
 ## Kiểm tra thông tin theo BEP
 

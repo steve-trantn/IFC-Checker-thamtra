@@ -750,6 +750,66 @@
       objs.forEach((o, i) => { if (vals.has(o[col]) && !this.hiddenSet.has(i) && (!this.isolateSet || this.isolateSet.has(i))) ids.push(i); });
       this.select(ids);
     }
+    // ------------------------------------------------------------------ bản vẽ 2D phủ lên mô hình
+    /** segs: Float32Array (x1,y1,x2,y2) toạ độ tương đối gốc cảnh; vẽ ở cao độ z (mặc định: trên đỉnh mô hình). */
+    setOverlay(segs, opts = {}) {
+      if (this.overlay) { this.scene.remove(this.overlay); this.overlay.geometry.dispose(); this.overlay = null; }
+      if (!segs || !segs.length) { this._render(); return; }
+      const z = opts.z != null ? opts.z : (this.bounds ? this.bounds.max.z + 0.3 : 0);
+      const n = segs.length / 4, pos = new Float32Array(n * 6);
+      for (let i = 0; i < n; i++) {
+        pos[i * 6] = segs[i * 4]; pos[i * 6 + 1] = segs[i * 4 + 1]; pos[i * 6 + 2] = z;
+        pos[i * 6 + 3] = segs[i * 4 + 2]; pos[i * 6 + 4] = segs[i * 4 + 3]; pos[i * 6 + 5] = z;
+      }
+      const g = new T.BufferGeometry();
+      g.setAttribute("position", new T.BufferAttribute(pos, 3));
+      this.overlay = new T.LineSegments(g, new T.LineBasicMaterial({ color: opts.color || 0x1b2a41, transparent: true, opacity: 0.75, depthTest: false }));
+      this.overlay.renderOrder = 8;
+      this.overlay.frustumCulled = false;
+      this.scene.add(this.overlay);
+      this._render();
+    }
+
+    setOverlayVisible(on) { if (this.overlay) { this.overlay.visible = !!on; this._render(); } }
+
+    /** pts: [{x,y,z,c:[r,g,b]}] toạ độ tương đối gốc cảnh - điểm đánh dấu kết quả đối chiếu bản vẽ */
+    setMarkers(pts) {
+      if (this.markers) { this.scene.remove(this.markers); this.markers.geometry.dispose(); this.markers = null; }
+      if (!pts || !pts.length) { this._render(); return; }
+      const pos = new Float32Array(pts.length * 3), col = new Float32Array(pts.length * 3);
+      pts.forEach((p, i) => { pos.set([p.x, p.y, p.z], i * 3); col.set(p.c, i * 3); });
+      const g = new T.BufferGeometry();
+      g.setAttribute("position", new T.BufferAttribute(pos, 3));
+      g.setAttribute("color", new T.BufferAttribute(col, 3));
+      this.markers = new T.Points(g, new T.PointsMaterial({ size: 11, sizeAttenuation: false, vertexColors: true, depthTest: false,
+        map: this._dotTexture(false), transparent: true }));
+      this.markers.renderOrder = 12;
+      this.markers.frustumCulled = false;
+      this.scene.add(this.markers);
+      this._render();
+    }
+
+    /** Bay tới 1 điểm (toạ độ tương đối gốc cảnh), khung nhìn rộng r mét */
+    focusPoint(x, y, z, r = 25) {
+      this._autoFit = false;
+      const c = new T.Vector3(x, y, z);
+      this._flyToBox(new T.Box3().setFromCenterAndSize(c, new T.Vector3(r, r, r)));
+      if (this.activeMarker) {
+        const ap = this.activeMarker.geometry.getAttribute("position");
+        ap.setXYZ(0, x, y, z); ap.needsUpdate = true; this.activeMarker.visible = true;
+      }
+      this._render();
+    }
+
+    /** Nhìn bằng (từ trên xuống) - thuận tiện so với bản vẽ mặt bằng */
+    viewTop() {
+      this._autoFit = false;
+      const off = this.camera.position.clone().sub(this.target);
+      const d = off.length();
+      this.camera.position.set(this.target.x, this.target.y - d * 0.001, this.target.z + d);
+      this._render();
+    }
+
     setBoxMode(on) { this.boxMode = !!on; this.renderer.domElement.style.cursor = this.boxMode ? "crosshair" : ""; }
 
     _drawBox(x0, y0, x1, y1) {

@@ -49,6 +49,10 @@ class Workspace:
         self.api_key = ""
         self.ai_model = "claude-opus-5-5"
         self.ai_summary = ""
+        self.project = None            # {"id", "name", "owner"} khi đang mở / đã lưu dự án
+        self.extra_files: dict[str, str] = {}   # file kèm theo dự án (bản vẽ DXF...)
+        self.drawing_state = None      # cấu hình + kết quả đối chiếu bản vẽ 2D
+        self.drawing = None
         self.jobs: dict[str, Job] = {}
         import hashlib
         tag = hashlib.sha1(sid.encode("utf-8")).hexdigest()[:10]   # sid có thể là email -> không dùng làm tên thư mục

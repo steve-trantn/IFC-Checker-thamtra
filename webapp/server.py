@@ -159,6 +159,7 @@ def state(request: Request):
     return {
         "app": {"name": APP_NAME, "version": __version__, "author": AUTHOR, "phone": AUTHOR_PHONE},
         "user": getattr(request.state, "user", None), "auth": auth.describe(),
+        "project": ws.project,
         "models": [{"file": m.file_name, "schema": m.schema, "app": m.application, "project": m.project_name,
                     "elements": len(m.elements), "parts": m.part_count, "error": m.error, "warnings": m.warnings,
                     "proxies": sum(1 for r in m.elements if r.ifc_class == "IfcBuildingElementProxy"),
@@ -606,6 +607,217 @@ def report_html(request: Request):
     p = os.path.join(ws.tmpdir, "BaoCao_ThamTra.html")
     export_html(_report_result(ws), p)
     return FileResponse(p, filename=f"BaoCao_ThamTra_{time.strftime('%Y%m%d_%H%M')}.html")
+
+
+# ====================================================================== đối chiếu bản vẽ 2D
+def _drawing(ws):
+    """Bản vẽ đang dùng (đọc lại từ file nếu vừa mở dự án)."""
+    from ifc_checker.drawing_compare import read_drawing
+    if ws.drawing is None and ws.extra_files.get("drawing") and os.path.exists(ws.extra_files["drawing"]):
+        ws.drawing = read_drawing(ws.extra_files["drawing"])
+    return ws.drawing
+
+
+def _drawing_info(ws):
+    from ifc_checker.drawing_compare import find_dwg_converter
+    dw = ws.drawing
+    st = ws.drawing_state or {}
+    info = {"converter": bool(find_dwg_converter()), "file": None, "layers": [], "config": st.get("config"),
+            "summary": (st.get("result") or {}).get("summary")}
+    if dw is not None:
+        pts = Counter(p[2] for p in dw.points)
+        txt = Counter(t[2] for t in dw.texts)
+        info["file"] = os.path.basename(dw.path)
+        info["extents"] = dw.extents
+        info["layers"] = sorted([{"name": k, "points": pts.get(k, 0), "texts": txt.get(k, 0),
+                                  "segments": len(dw.segments.get(k, [])), "types": v} for k, v in dw.layers.items()],
+                                key=lambda x: -(x["points"] * 3 + x["texts"] + x["segments"] / 50))
+    return info
+
+
+@app.get("/api/drawing")
+def drawing_get(request: Request):
+    ws = ws_of(request)
+    try:
+        _drawing(ws)
+    except Exception:
+        pass
+    return _drawing_info(ws)
+
+
+@app.post("/api/drawing/upload")
+async def drawing_upload(request: Request, file: UploadFile = File(...)):
+    from dataclasses import asdict as _asdict
+
+    from ifc_checker.drawing_compare import read_drawing, suggest_config
+    ws = ws_of(request)
+    _need_idle(ws)
+    name = safe_name(file.filename)
+    if not name.lower().endswith((".dxf", ".dwg")):
+        raise HTTPException(400, "Chỉ nhận file DXF hoặc DWG")
+    p = os.path.join(ws.tmpdir, name)
+    with open(p, "wb") as out:
+        while chunk := await file.read(1 << 20):
+            out.write(chunk)
+    models = ws.ok_models()
+
+    def work(progress):
+        progress(0, 2, f"Đọc bản vẽ {name}...")
+        dw = read_drawing(p)
+        progress(1, 2, "Gợi ý cấu hình đối chiếu...")
+        cfg = suggest_config(dw, models)
+        ws.drawing = dw
+        ws.extra_files["drawing"] = p
+        ws.drawing_state = {"file": name, "config": _asdict(cfg), "result": None}
+        return len(dw.points)
+    return ws.start_job("Đọc bản vẽ 2D", work).to_dict()
+
+
+@app.post("/api/drawing/compare")
+async def drawing_compare(request: Request):
+    from ifc_checker.drawing_compare import CompareConfig, compare
+    ws = ws_of(request)
+    _need_idle(ws)
+    b = await request.json()
+    names = set(CompareConfig.__dataclass_fields__)
+    raw = {k: v for k, v in (b.get("config") or {}).items() if k in names}
+    for k in ("label_radius", "match_radius", "elev_tol", "scale", "dx", "dy"):
+        if k in raw:
+            try:
+                raw[k] = float(str(raw[k]).replace(",", "."))
+            except ValueError:
+                raise HTTPException(400, f"Giá trị không hợp lệ: {k}")
+    cfg = CompareConfig(**raw)
+    models = ws.ok_models()
+    if not models:
+        raise HTTPException(400, "Chưa mở mô hình IFC")
+
+    def work(progress):
+        dw = _drawing(ws)
+        if dw is None:
+            raise RuntimeError("Chưa nạp bản vẽ")
+        progress(0, 1, "Đang đối chiếu mô hình với bản vẽ...")
+        res = compare(dw, models, cfg)
+        ws.drawing_state = {"file": os.path.basename(dw.path), "config": res["config"], "result": res}
+        return res["summary"]
+    return ws.start_job("Đối chiếu bản vẽ", work).to_dict()
+
+
+@app.get("/api/drawing/result")
+def drawing_result(request: Request, status: str = ""):
+    ws = ws_of(request)
+    res = (ws.drawing_state or {}).get("result")
+    if not res:
+        return {"summary": None, "rows": []}
+    rows = [r for r in res["rows"] if not status or r["status"] == status]
+    return {"summary": res["summary"], "rows": rows[:5000], "count": len(rows),
+            "statuses": dict(Counter(r["status"] for r in res["rows"]))}
+
+
+@app.get("/api/drawing/overlay")
+def drawing_overlay(request: Request):
+    """Nét bản vẽ (các layer chọn) - toạ độ tương đối so với gốc cảnh 3D, float32 (x1,y1,x2,y2)."""
+    import numpy as np
+
+    from ifc_checker.drawing_compare import CompareConfig, overlay_segments
+    from ifc_checker.geometry import common_origin, compute_many
+    ws = ws_of(request)
+    dw = _drawing(ws)
+    if dw is None:
+        raise HTTPException(404, "Chưa nạp bản vẽ")
+    cfg = CompareConfig(**{k: v for k, v in ((ws.drawing_state or {}).get("config") or {}).items()
+                           if k in CompareConfig.__dataclass_fields__})
+    models = ws.ok_models()
+    compute_many(models)
+    o = common_origin(models)
+    segs = overlay_segments(dw, cfg)
+    if len(segs):
+        segs = segs - np.array([o[0], o[1], o[0], o[1]])
+    return Response(segs.astype("<f4").tobytes(), media_type="application/octet-stream",
+                    headers={"X-Count": str(len(segs))})
+
+
+@app.get("/api/drawing/report.xlsx")
+def drawing_report(request: Request):
+    from ifc_checker.drawing_compare import export_excel as dexport
+    ws = ws_of(request)
+    res = (ws.drawing_state or {}).get("result")
+    if not res:
+        raise HTTPException(400, "Chưa có kết quả đối chiếu")
+    p = os.path.join(ws.tmpdir, "DoiChieu_BanVe.xlsx")
+    dexport(res, p)
+    return FileResponse(p, filename=f"DoiChieu_BanVe_{time.strftime('%Y%m%d_%H%M')}.xlsx")
+
+
+# ====================================================================== dự án
+def _owner(request: Request) -> str:
+    u = getattr(request.state, "user", None)
+    return u["email"] if u else "local"
+
+
+@app.get("/api/projects")
+def projects_list(request: Request):
+    from .projects import list_projects
+    return {"projects": list_projects(_owner(request)), "current": ws_of(request).project}
+
+
+@app.post("/api/projects/save")
+async def projects_save(request: Request):
+    from .projects import save_project
+    ws = ws_of(request)
+    _need_idle(ws)
+    b = await request.json()
+    if not ws.models:
+        raise HTTPException(400, "Chưa có mô hình để lưu")
+    owner = _owner(request)
+    pid = None if b.get("as_new") else (b.get("id") or (ws.project or {}).get("id"))
+    name = (b.get("name") or (ws.project or {}).get("name") or "Dự án").strip()[:120]
+    return ws.start_job("Lưu dự án", lambda progress: save_project(ws, owner, name, pid, progress)).to_dict()
+
+
+@app.post("/api/projects/{pid}/open")
+def projects_open(pid: str, request: Request):
+    from .projects import open_project
+    ws = ws_of(request)
+    _need_idle(ws)
+    owner = _owner(request)
+    return ws.start_job("Mở dự án", lambda progress: open_project(ws, owner, pid, progress)).to_dict()
+
+
+@app.delete("/api/projects/{pid}")
+def projects_delete(pid: str, request: Request):
+    from .projects import delete_project
+    ws = ws_of(request)
+    delete_project(_owner(request), pid)
+    if ws.project and ws.project.get("id") == pid:
+        ws.project = None
+    return {"ok": True}
+
+
+@app.get("/api/projects/{pid}/download")
+def projects_download(pid: str, request: Request):
+    from .projects import export_zip, list_projects
+    ws = ws_of(request)
+    owner = _owner(request)
+    name = next((p["name"] for p in list_projects(owner) if p["id"] == pid), "du_an")
+    safe = "".join(ch for ch in name if ch.isalnum() or ch in " -_.").strip() or "du_an"
+    path = export_zip(owner, pid, os.path.join(ws.tmpdir, f"{pid}.ttproj"))
+    return FileResponse(path, filename=f"{safe}.ttproj", media_type="application/zip")
+
+
+@app.post("/api/projects/upload")
+async def projects_upload(request: Request, file: UploadFile = File(...)):
+    from .projects import import_zip
+    ws = ws_of(request)
+    p = os.path.join(ws.tmpdir, "upload.ttproj")
+    with open(p, "wb") as out:
+        while chunk := await file.read(1 << 20):
+            out.write(chunk)
+    try:
+        pid = import_zip(_owner(request), p)
+    except Exception as ex:
+        raise HTTPException(400, f"Không nhập được dự án: {ex}")
+    return {"id": pid}
 
 
 # ====================================================================== cài đặt & AI

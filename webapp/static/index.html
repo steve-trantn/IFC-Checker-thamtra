@@ -22,6 +22,11 @@
 
 <nav class="ribbon">
   <div class="rgroup"><div class="rbtns">
+    <button class="rbtn" id="btnProjOpen" title="Mở dự án đã lưu"><span class="ic">🗂️</span>Dự án</button>
+    <button class="rbtn" id="btnProjSave" title="Lưu dự án (file IFC, quy tắc, ma trận, kết quả)"><span class="ic">💾</span>Lưu</button>
+    <button class="rbtn" id="btnProjSaveAs" title="Lưu thành dự án mới"><span class="ic">📑</span>Lưu<br>thành...</button>
+  </div><div class="rlabel">Dự án</div></div>
+  <div class="rgroup"><div class="rbtns">
     <label class="rbtn" title="Mở 1 hoặc nhiều file IFC"><input type="file" id="fileInput" accept=".ifc" multiple hidden><span class="ic">📂</span>Mở IFC</label>
     <button class="rbtn" data-dock="health"><span class="ic">🩺</span>Sức khỏe<br>mô hình</button>
   </div><div class="rlabel">Mô hình</div></div>
@@ -34,6 +39,9 @@
     <button class="rbtn" data-dock="clash"><span class="ic">⚠️</span>Ma trận<br>va chạm</button>
     <button class="rbtn primary" id="btnClash"><span class="ic">💥</span>Chạy<br>xung đột</button>
   </div><div class="rlabel">Xung đột</div></div>
+  <div class="rgroup"><div class="rbtns">
+    <button class="rbtn" data-dock="drawing" title="Đối chiếu mô hình với bản vẽ 2D (DXF/DWG)"><span class="ic">📐</span>Đối chiếu<br>bản vẽ</button>
+  </div><div class="rlabel">Bản vẽ 2D</div></div>
   <div class="rgroup"><div class="rbtns">
     <button class="rbtn" id="btnColor"><span class="ic">🎨</span>Tô màu<br>kết quả</button>
     <button class="rbtn" id="btnIsoFail"><span class="ic">🔎</span>Cô lập<br>đối tượng lỗi</button>
@@ -89,6 +97,7 @@
         <button data-tab="rules">Quy tắc BEP</button>
         <button data-tab="results">Kết quả</button>
         <button data-tab="clash">Xung đột</button>
+        <button data-tab="drawing">Bản vẽ 2D</button>
         <button data-tab="inventory">Thống kê thuộc tính</button>
         <button data-tab="ailist">Danh sách chọn</button>
         <button data-tab="log">Nhật ký</button>

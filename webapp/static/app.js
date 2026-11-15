@@ -124,6 +124,9 @@ function bindUI() {
   $("#aiSend").onclick = askAI;
   $("#aiq").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); askAI(); } });
   $("#btnSettings").onclick = openSettings;
+  $("#btnProjOpen").onclick = openProjects;
+  $("#btnProjSave").onclick = () => saveProject(false);
+  $("#btnProjSaveAs").onclick = () => saveProject(true);
   $("#mclose").onclick = closeModal;
   // kéo đổi chiều cao bảng dưới
   let drag = null;
@@ -142,7 +145,8 @@ async function refreshState() {
   $("#credit").textContent = `Phát triển bởi ${st.app.author} · ĐT: ${st.app.phone} · v${st.app.version}`;
   const u = st.user;
   $("#userbox").innerHTML = u ? `${u.picture ? `<img src="${esc(u.picture)}" alt="" referrerpolicy="no-referrer">` : ""}<span title="${esc(u.email)}">${esc(u.name || u.email)}</span><a href="/auth/logout">Đăng xuất</a>` : "";
-  $("#docname").textContent = st.models.length ? st.models.map((m) => m.file).join(" · ") : "Chưa mở mô hình";
+  $("#docname").textContent = (st.project ? `📁 ${st.project.name} — ` : "") +
+    (st.models.length ? st.models.map((m) => m.file).join(" · ") : "Chưa mở mô hình");
   $("#start").classList.toggle("hidden", st.models.length > 0);
   const r = st.result;
   $("#statusRight").textContent = `${st.models.length} file · ${fmt(st.models.reduce((a, m) => a + m.elements, 0))} đối tượng` +
@@ -160,6 +164,7 @@ async function loadScene() {
     $("#start").classList.add("hidden");     // ẩn màn hình chào trước khi căn camera
     S.viewer.load(meta, data);
     S.sceneKey = meta;
+    loadDrawingOverlay();
     status(`Mô hình 3D: ${fmt(meta.objects.length)} đối tượng`);
   } catch (e) { toast("Không dựng được 3D: " + e.message, true); }
 }
@@ -280,7 +285,7 @@ function showTab(t) {
 }
 async function renderTab() {
   $$("#docktabs [data-tab]").forEach((b) => b.classList.toggle("on", b.dataset.tab === S.tab));
-  const fn = { health: tabHealth, rules: tabRules, results: tabResults, clash: tabClash, inventory: tabInventory, ailist: tabAIList, log: tabLog }[S.tab];
+  const fn = { health: tabHealth, rules: tabRules, results: tabResults, clash: tabClash, drawing: tabDrawing, inventory: tabInventory, ailist: tabAIList, log: tabLog }[S.tab];
   try { await fn($("#dockbody")); } catch (e) { $("#dockbody").innerHTML = `<div class="pad muted">${esc(e.message)}</div>`; }
 }
 
@@ -509,6 +514,156 @@ async function tabLog(el) {
   let extra = "";
   if (S.clash && S.clash.messages) extra = "\n\n— Nhật ký xung đột —\n" + S.clash.messages.join("\n");
   el.innerHTML = `<div class="scroll"><pre style="margin:0;padding:8px 10px;white-space:pre-wrap">${esc(S.logs.join("\n") + extra)}</pre></div>`;
+}
+
+// ====================================================================== dự án
+async function saveProject(asNew) {
+  if (!S.state.models.length) return toast("Chưa có mô hình để lưu", true);
+  let name = S.state.project ? S.state.project.name : "";
+  if (asNew || !S.state.project) {
+    name = prompt("Tên dự án:", name || (S.state.models[0].file.replace(/\.ifc$/i, "")));
+    if (!name) return;
+  }
+  try {
+    await runJob(api("/api/projects/save", { method: "POST", json: { name, as_new: !!asNew } }));
+    await refreshState(); toast(`Đã lưu dự án "${S.state.project.name}"`);
+  } catch (e) { toast(e.message, true); }
+}
+async function openProjects() {
+  const d = await api("/api/projects");
+  const rows = d.projects.map((p) => `<tr><td><b>${esc(p.name)}</b><div class="muted small">${esc(p.files.slice(0, 4).join(", "))}${p.files.length > 4 ? "…" : ""}</div></td>
+    <td class="n">${p.files.length}</td><td class="muted small">${esc(p.updated)}</td><td class="n">${p.size_mb} MB</td>
+    <td>${p.has_result ? "✅" : ""}${p.has_clash ? " 💥" : ""}</td>
+    <td style="white-space:nowrap"><button class="btn small primary" data-open="${p.id}">Mở</button> <a class="btn small" href="/api/projects/${p.id}/download">⬇</a> <button class="btn small" data-del="${p.id}">🗑</button></td></tr>`).join("");
+  modal("Dự án đã lưu", `${d.projects.length ? `<table class="grid"><tr><th>Dự án</th><th>File</th><th>Cập nhật</th><th>Dung lượng</th><th>Kết quả</th><th></th></tr>${rows}</table>`
+      : '<p class="muted">Chưa có dự án nào. Mở file IFC rồi bấm 💾 Lưu.</p>'}
+    <p class="hint">Dự án lưu file IFC, bộ quy tắc, ma trận va chạm, kết quả kiểm tra, xung đột, đối chiếu bản vẽ và cài đặt. ⬇ tải về file .ttproj để chuyển sang máy khác.</p>
+    <label class="btn small"><input type="file" id="projUpload" accept=".ttproj,.zip" hidden>📤 Nhập file .ttproj</label>`, [{ text: "Đóng" }]);
+  $$("#mbody [data-open]").forEach((b) => (b.onclick = async () => { closeModal(); await loadProject(b.dataset.open); }));
+  $$("#mbody [data-del]").forEach((b) => (b.onclick = async () => {
+    if (!confirm("Xoá dự án này khỏi máy chủ?")) return;
+    await api(`/api/projects/${b.dataset.del}`, { method: "DELETE" }); closeModal(); openProjects();
+  }));
+  $("#projUpload").onchange = async (e) => {
+    try { const r = await upload("/api/projects/upload", [...e.target.files]); closeModal(); await loadProject(r.id); }
+    catch (err) { toast(err.message, true); }
+  };
+}
+async function loadProject(pid) {
+  try {
+    await runJob(api(`/api/projects/${pid}/open`, { method: "POST" }));
+    Object.assign(S, { results: null, clash: null, rules: null, tests: null, health: null, drawing: null, aiListCard: null, clashView: null });
+    await refreshState(); await loadScene(); await loadDrawingOverlay(); renderTab();
+    toast(`Đã mở dự án "${S.state.project.name}"`);
+  } catch (e) { toast(e.message, true); }
+}
+
+// ====================================================================== đối chiếu bản vẽ 2D
+const DSTAT_COLOR = { "Khớp": [0.2, 0.65, 0.35], "Khác tên": [0.55, 0.4, 0.85], "Lệch cao độ": [0.95, 0.6, 0.1],
+  "Chỉ có trên bản vẽ": [0.85, 0.15, 0.15], "Chỉ có trong mô hình": [0.1, 0.5, 0.95] };
+async function loadDrawingOverlay() {
+  try {
+    const info = await api("/api/drawing");
+    if (!info.file || !S.viewer.meta) { S.viewer.setOverlay(null); S.viewer.setMarkers(null); return; }
+    const buf = await api("/api/drawing/overlay");
+    S.viewer.setOverlay(new Float32Array(buf));
+    S.viewer.setOverlayVisible(S.drawOverlayOn !== false);
+    const r = await api("/api/drawing/result");
+    drawingMarkers(r.rows || []);
+  } catch (e) { /* chưa có bản vẽ */ }
+}
+function drawingMarkers(rows) {
+  const meta = S.viewer.meta; if (!meta) return;
+  const o = meta.origin, zTop = S.viewer.bounds ? S.viewer.bounds.max.z + 0.5 : 0;
+  S.viewer.setMarkers(rows.map((r) => ({ x: r.x - o[0], y: r.y - o[1], z: (r.top_model ?? r.top_drawing ?? zTop + o[2]) - o[2] + 0.3,
+    c: DSTAT_COLOR[r.status] || [0.5, 0.5, 0.5] })));
+}
+async function tabDrawing(el) {
+  if (!S.drawing) S.drawing = await api("/api/drawing");
+  const D = S.drawing;
+  if (!D.file) {
+    el.innerHTML = `<div class="pad"><b>Đối chiếu mô hình với bản vẽ 2D</b>
+      <p class="muted">Nạp bản vẽ mặt bằng (DXF${D.converter ? " hoặc DWG" : ""}) cùng hệ toạ độ với mô hình (VN-2000). Phần mềm ghép ký hiệu trên bản vẽ (vd hố ga) với đối tượng trong mô hình theo vị trí,
+      đọc nhãn (tên, cao độ mặt, cao độ đáy) để so sánh; nét bản vẽ được phủ lên mô hình 3D để xem độ khớp.</p>
+      ${D.converter ? "" : '<p class="hint">⚠ Máy chủ chưa có công cụ chuyển DWG: hãy xuất DXF từ AutoCAD/ZWCAD (Save As → DXF), hoặc cài ODA File Converter (miễn phí) / LibreDWG (nguồn mở).</p>'}
+      <label class="btn primary"><input type="file" id="dwFile" accept=".dxf,.dwg" hidden>📂 Nạp bản vẽ</label></div>`;
+    $("#dwFile").onchange = uploadDrawing;
+    return;
+  }
+  const c = Object.assign({}, D.config || {});
+  const f = (k, label, w = 160, hint = "") => `<label class="small" title="${esc(hint)}">${label}<br><input class="inp" data-c="${k}" value="${esc(c[k] ?? "")}" style="width:${w}px"></label>`;
+  const lrows = D.layers.slice(0, 200).map((l) => {
+    const chk = (k) => { try { return c[k] && new RegExp(c[k], "i").test(l.name) ? "checked" : ""; } catch (e) { return ""; } };
+    return `<tr><td>${esc(l.name)}</td><td class="n">${fmt(l.points)}</td><td class="n">${fmt(l.texts)}</td><td class="n">${fmt(l.segments)}</td>
+      <td><input type="checkbox" data-l="point_layers" data-n="${esc(l.name)}" ${chk("point_layers")}></td>
+      <td><input type="checkbox" data-l="label_layers" data-n="${esc(l.name)}" ${chk("label_layers")}></td>
+      <td><input type="checkbox" data-l="overlay_layers" data-n="${esc(l.name)}" ${chk("overlay_layers")}></td></tr>`;
+  }).join("");
+  let res = '<div class="pad muted">Chọn layer ký hiệu / nhãn, nhóm đối tượng mô hình rồi bấm ▶ Đối chiếu.</div>';
+  const R = S.drawingRes;
+  if (R && R.summary) {
+    const s = R.summary, t = s.top, b = s.bottom;
+    const st = Object.entries(R.statuses).map(([k, n]) => `<option ${S.dwStatus === k ? "selected" : ""} value="${esc(k)}">${esc(k)} (${n})</option>`).join("");
+    res = `<div class="kpis"><div class="kpi"><b>${fmt(s.matched)}/${fmt(s.model_points)}</b><span>Ghép theo vị trí (≤${s.match_radius} m)</span></div>
+      <div class="kpi"><b style="color:#c62828">${fmt(s.only_drawing)}</b><span>Chỉ có trên bản vẽ</span></div><div class="kpi"><b style="color:#1565c0">${fmt(s.only_model)}</b><span>Chỉ có trong mô hình</span></div>
+      <div class="kpi"><b>${fmt(s.name_mismatch)}</b><span>Khác tên</span></div>
+      <div class="kpi"><b>${t.median ?? "-"} m</b><span>Trung vị |Δ mặt| · >0,1: ${t[">0.1"]} · >0,3: ${t[">0.3"]} · >1: ${t[">1.0"]}</span></div>
+      <div class="kpi"><b>${b.median ?? "-"} m</b><span>Trung vị |Δ đáy| · >0,3: ${b[">0.3"]} · >1: ${b[">1.0"]}</span></div>
+      <div class="kpi"><b>${s.dxy.median ?? "-"} m</b><span>Lệch vị trí trung vị (max ${s.dxy.max ?? "-"})</span></div></div>
+      <div class="tb"><select class="inp" id="dwSt"><option value="">Mọi trạng thái</option>${st}</select><span class="muted">${fmt(R.count)} dòng</span><span class="grow"></span>
+      ${Object.entries(DSTAT_COLOR).map(([k, v]) => `<span class="chip"><i style="display:inline-block;width:9px;height:9px;border-radius:50%;background:rgb(${v.map((x) => Math.round(x * 255))})"></i> ${k}</span>`).join("")}
+      <a class="btn small" href="/api/drawing/report.xlsx">⬇ Excel</a></div>
+      <table class="grid"><tr><th>Trạng thái</th><th>Tên IFC</th><th>Tên BV</th><th>Lệch VT (m)</th><th>Mặt IFC</th><th>Mặt BV</th><th>Δ mặt</th><th>Đáy IFC</th><th>Đáy BV</th><th>Δ đáy</th><th>Nhãn bản vẽ</th></tr>` +
+      R.rows.map((r, i) => `<tr class="click" data-i="${i}"><td>${esc(r.status)}</td><td>${esc(r.name_model)}</td><td>${esc(r.name_drawing)}</td><td class="n">${r.dxy ?? ""}</td>
+        <td class="n">${r.top_model ?? ""}</td><td class="n">${r.top_drawing ?? ""}</td><td class="n ${Math.abs(r.d_top || 0) > s.elev_tol ? "sevERROR" : ""}">${r.d_top ?? ""}</td>
+        <td class="n">${r.bottom_model ?? ""}</td><td class="n">${r.bottom_drawing ?? ""}</td><td class="n ${Math.abs(r.d_bottom || 0) > s.elev_tol ? "sevWARNING" : ""}">${r.d_bottom ?? ""}</td>
+        <td class="muted small">${esc((r.label || "").replace(/\n/g, " / ")).slice(0, 80)}</td></tr>`).join("") + "</table>";
+  }
+  el.innerHTML = `<div class="tb"><b>📐 ${esc(D.file)}</b><span class="muted">${fmt(D.layers.length)} layer</span><span class="grow"></span>
+      <label class="small"><input type="checkbox" id="dwOv" ${S.drawOverlayOn !== false ? "checked" : ""}> Hiện nét bản vẽ trên 3D</label>
+      <button class="btn small" id="dwTop">⬇ Nhìn bằng</button><label class="btn small"><input type="file" id="dwFile" accept=".dxf,.dwg" hidden>📂 Bản vẽ khác</label>
+      <button class="btn small primary" id="dwRun">▶ Đối chiếu</button></div>
+    <div class="split2" style="grid-template-columns: minmax(330px, 34%) minmax(0, 1fr)"><div>
+      <div class="tb" style="flex-wrap:wrap;gap:8px">${f("name", "Đối tượng", 90)}${f("model_file", "Mô hình: lọc file", 120, "regex tên file IFC")}${f("model_class", "Lớp IFC", 170)}${f("model_name", "Từ khoá tên", 100)}
+        ${f("match_radius", "Bán kính ghép (m)", 70)}${f("label_radius", "Bán kính nhãn (m)", 70)}${f("elev_tol", "Dung sai cao độ (m)", 70)}
+        ${f("scale", "Tỷ lệ BV", 60, "0.001 nếu bản vẽ vẽ theo mm")}${f("dx", "Dịch X", 60)}${f("dy", "Dịch Y", 60)}${f("name_regex", "Mẫu tên (regex)", 170)}</div>
+      <table class="grid"><tr><th>Layer</th><th>Ký hiệu</th><th>Chữ</th><th>Nét</th><th title="Layer chứa ký hiệu đối tượng (block/đường tròn)">KH</th><th title="Layer chứa nhãn tên/cao độ">Nhãn</th><th title="Hiện nét lên mô hình 3D">3D</th></tr>${lrows}</table>
+    </div><div>${res}</div></div>`;
+  const collect = () => {
+    const cfg = Object.assign({}, c);
+    $$("[data-c]", el).forEach((x) => (cfg[x.dataset.c] = x.value));
+    for (const k of ["point_layers", "label_layers", "overlay_layers"]) {
+      const names = $$(`[data-l="${k}"]:checked`, el).map((x) => "^" + x.dataset.n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "$");
+      cfg[k] = names.join("|");
+    }
+    return cfg;
+  };
+  $("#dwFile").onchange = uploadDrawing;
+  $("#dwTop").onclick = () => S.viewer.viewTop();
+  $("#dwOv").onchange = (e) => { S.drawOverlayOn = e.target.checked; S.viewer.setOverlayVisible(e.target.checked); };
+  $("#dwRun").onclick = async () => {
+    try {
+      await runJob(api("/api/drawing/compare", { method: "POST", json: { config: collect() } }));
+      S.drawing = null; S.drawingRes = await api("/api/drawing/result"); S.dwStatus = "";
+      await loadDrawingOverlay(); renderTab();
+      const s = S.drawingRes.summary; toast(`Ghép ${s.matched}/${s.model_points} · chỉ BV ${s.only_drawing} · chỉ MH ${s.only_model} · lệch mặt >0,3 m: ${s.top[">0.3"]}`);
+    } catch (e) { toast(e.message, true); }
+  };
+  if ($("#dwSt")) $("#dwSt").onchange = async (e) => { S.dwStatus = e.target.value; S.drawingRes = await api("/api/drawing/result?status=" + encodeURIComponent(e.target.value)); renderTab(); };
+  $$("tr[data-i]", el).forEach((tr) => (tr.onclick = () => {
+    const r = S.drawingRes.rows[+tr.dataset.i], o = S.viewer.meta ? S.viewer.meta.origin : [0, 0, 0];
+    $$("tr.sel", el).forEach((x) => x.classList.remove("sel")); tr.classList.add("sel");
+    if (r.step != null && r.file) { focusRefs([[r.file, r.step]]); showProps(r.file, r.step); }
+    else S.viewer.focusPoint(r.x - o[0], r.y - o[1], (r.top_drawing ?? (S.viewer.bounds.max.z + o[2])) - o[2], 30);
+  }));
+  if (!S.drawingRes && D.summary) { S.drawingRes = await api("/api/drawing/result"); renderTab(); }
+}
+async function uploadDrawing(e) {
+  const files = [...e.target.files]; if (!files.length) return;
+  try {
+    await runJob(upload("/api/drawing/upload", files));
+    S.drawing = null; S.drawingRes = null; await loadDrawingOverlay(); showTab("drawing"); toast("Đã nạp bản vẽ - kiểm tra layer gợi ý rồi bấm ▶ Đối chiếu");
+  } catch (err) { toast(err.message, true); }
 }
 
 // ====================================================================== trợ lý AI
