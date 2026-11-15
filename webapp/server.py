@@ -274,6 +274,79 @@ def select(request: Request, file: str = "", ifc_class: str = "", storey: str = 
     return {"refs": refs, "count": len(refs)}
 
 
+def _spatial_index(m, part_mode):
+    from collections import defaultdict
+
+    from ifc_checker.engine import select_records
+    spatial = {r.guid: r for r in m.records if r.kind == "spatial"}
+    kids = defaultdict(list)
+    roots = []
+    for g, r in spatial.items():
+        (kids[r.container_guid] if r.container_guid in spatial and r.container_guid != g else roots).append(g)
+    elems = [r for r in select_records(m, part_mode)[0] if r.kind == "element"]
+    return spatial, kids, roots, elems
+
+
+@app.get("/api/tree")
+def tree(request: Request):
+    """Cây cấu trúc IFC: file -> không gian (Site/Building/Road/Tầng...) -> nhóm lớp IFC (số lượng)."""
+    from collections import Counter as _C, defaultdict
+    ws = ws_of(request)
+    out = []
+    for m in ws.ok_models():
+        spatial, kids, roots, elems = _spatial_index(m, ws.part_mode)
+        groups = defaultdict(_C)
+        for r in elems:
+            groups[r.container_guid if r.container_guid in spatial else ""][r.ifc_class] += 1
+
+        def node(g, depth=0):
+            r = spatial[g]
+            ch = [node(c, depth + 1) for c in sorted(kids.get(g, []), key=lambda x: (spatial[x].ifc_class, spatial[x].name))] if depth < 12 else []
+            own = sum(groups[g].values())
+            return {"id": g, "name": r.long_name or r.name or "", "cls": r.ifc_class, "children": ch,
+                    "groups": [[c, n] for c, n in sorted(groups[g].items())], "count": own + sum(x["count"] for x in ch)}
+        out.append({"file": m.file_name, "schema": m.schema, "project": m.project_name,
+                    "roots": [node(g) for g in sorted(roots, key=lambda x: spatial[x].ifc_class)],
+                    "orphans": [[c, n] for c, n in sorted(groups[""].items())], "count": len(elems)})
+    return {"files": out}
+
+
+@app.get("/api/tree/items")
+def tree_items(request: Request, file: str, container: str = "", cls: str = "", recursive: int = 0, limit: int = 3000):
+    """Đối tượng thuộc 1 nút cây (không gian và/hoặc lớp IFC)."""
+    ws = ws_of(request)
+    m = ws.models.get(file)
+    if m is None:
+        raise HTTPException(404, "Không có file")
+    spatial, kids, roots, elems = _spatial_index(m, ws.part_mode)
+    conts = None
+    if container == "-":
+        conts = {""}
+    elif container:
+        conts = {container}
+        if recursive:
+            stack = [container]
+            while stack:
+                for c in kids.get(stack.pop(), []):
+                    if c not in conts:
+                        conts.add(c)
+                        stack.append(c)
+    by_guid = {r.guid: r for r in m.records}
+    rows = []
+    for r in elems:
+        cg = r.container_guid if r.container_guid in spatial else ""
+        if conts is not None and cg not in conts:
+            continue
+        if cls and r.ifc_class != cls:
+            continue
+        name = r.name
+        if not name:
+            par = by_guid.get(r.parent_guid)
+            name = (par.name if par else "") + f" #{r.step_id}"
+        rows.append([file, r.step_id, name, r.ifc_class])
+    return {"count": len(rows), "refs": [[a, b] for a, b, _, _ in rows], "items": rows[:limit]}
+
+
 @app.get("/api/element")
 def element(request: Request, file: str, step: int):
     ws = ws_of(request)

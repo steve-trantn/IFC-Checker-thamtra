@@ -23,7 +23,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .projbtn { background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.25); color: #fff; border-radius: 6px;
   padding: 3px 10px; cursor: pointer; white-space: nowrap; max-width: 340px; overflow: hidden; text-overflow: ellipsis; font-size: 12.5px; }
 .projbtn:hover { background: rgba(255,255,255,.22); }
-.projmenu { position: absolute; top: 30px; left: 0; z-index: 300; width: 380px; max-height: 70vh; overflow: auto; background: #fff; color: var(--fg);
+.projmenu { position: absolute; top: 30px; left: 0; z-index: 300; width: 340px; max-height: 50vh; overflow: auto; background: #fff; color: var(--fg);
   border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 10px 30px rgba(0,0,0,.2); display: none; padding: 4px; }
 .projmenu.on { display: block; }
 .projmenu .pm { display: flex; flex-direction: column; width: 100%; text-align: left; border: 0; background: none; padding: 6px 10px; border-radius: 6px; cursor: pointer; font: inherit; color: inherit; }
@@ -81,6 +81,16 @@ button, input, select, textarea { font: inherit; color: inherit; }
 
 /* màn hình bắt đầu */
 .start { position: absolute; inset: 0; display: grid; place-items: center; background: linear-gradient(160deg, #f7f9fc, #e6ebf2); z-index: 5; }
+.startbox.compact { max-width: 460px; text-align: center; padding: 18px 22px; background: rgba(255,255,255,.85); border: 1px solid var(--line); border-radius: 12px; }
+.startbox.compact .startbtns { justify-content: center; }
+.ptabs { padding: 0 6px; gap: 0; }
+.ptabs button { border: 0; background: none; padding: 5px 10px; cursor: pointer; font: inherit; font-weight: 600; color: var(--muted); border-bottom: 2px solid transparent; }
+.ptabs button.on { color: var(--fg); border-bottom-color: var(--accent); }
+.vstatus { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.tree .ic2 { width: 16px; text-align: center; flex: 0 0 auto; }
+.tree .nm { overflow: hidden; text-overflow: ellipsis; }
+.tree .items { padding-left: 30px; }
+.tree .items .row { color: #34445a; }
 .start.hidden { display: none; }
 .startbox { max-width: 520px; padding: 24px; }
 .startbox h1 { font-size: 34px; line-height: 1.15; margin: 8px 0 12px; color: var(--navy2); font-weight: 600; }

@@ -76,7 +76,7 @@
       <div class="pbody" id="props"><div class="muted pad">Chọn 1 đối tượng trong mô hình 3D hoặc trong bảng để xem thông tin.</div></div>
     </section>
     <section class="panel" id="browserPanel">
-      <div class="phead">Trình duyệt dự án</div>
+      <div class="phead ptabs"><button data-lt="tree" class="on">Cấu trúc IFC</button><button data-lt="qa">Kiểm tra</button></div>
       <div class="pbody" id="browser"></div>
     </section>
     <section class="panel legendpanel" id="legendPanel">
@@ -89,15 +89,12 @@
     <div class="viewerwrap">
       <div id="viewer"></div>
       <div class="start" id="start">
-        <div class="startbox">
-          <div class="bigicon">🏗️</div>
-          <h1>Mô hình của bạn.<br>Thẩm tra rõ ràng hơn.</h1>
-          <p>Mở file IFC (IFC2X3 / IFC4 / IFC4.3 hạ tầng) để kiểm tra thông tin theo BEP, phát hiện xung đột và hỏi đáp mô hình bằng tiếng Việt.</p>
-          <div id="startProj"></div>
-          <div class="startbtns"><button class="btn primary" id="startNew">＋ Tạo dự án mới</button>
+        <div class="startbox compact">
+          <div id="startProj" class="muted">Chưa có mô hình. Chọn dự án ở ô <b>📁</b> trên cùng, hoặc thêm file IFC.</div>
+          <div class="startbtns"><button class="btn primary" id="startNew">＋ Dự án mới</button>
           <label class="btn"><input type="file" id="fileInput2" accept=".ifc" multiple hidden>📂 <span id="startAddLbl">Mở nhanh file IFC</span></label></div>
-          <div class="muted small">hoặc kéo thả file .ifc vào đây · có thể thêm nhiều file của nhiều bộ môn</div>
-          <div id="startRecent"></div>
+          <div class="muted small">hoặc kéo thả file .ifc vào khung này</div>
+          <div id="startRecent" hidden></div>
         </div>
       </div>
       <div class="dropmask" id="dropmask">Thả file IFC để mở</div>
@@ -134,6 +131,7 @@
 
 <footer class="statusbar">
   <span id="status">Sẵn sàng</span>
+  <span class="vstatus" id="viewerStatus"></span>
   <div class="progress" id="progress"><div id="progressbar"></div></div>
   <span class="spacer"></span>
   <span id="statusRight"></span>

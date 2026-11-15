@@ -55,9 +55,9 @@
       c.innerHTML = "";
       // không hiện menu chuột phải của trình duyệt trong khung 3D (kể cả trên menu / bảng thông tin của phần mềm)
       c.addEventListener("contextmenu", (e) => e.preventDefault());
-      this.canvasWrap = el("div", { class: "ttv-canvas" });
+      const bar = el("div", { class: "ttv-bar" + (this.opts.toolbarStrip ? " strip" : "") });
+      this.canvasWrap = el("div", { class: "ttv-canvas" + (this.opts.toolbarStrip ? " below" : "") });
       c.appendChild(this.canvasWrap);
-      const bar = el("div", { class: "ttv-bar" });
       bar.innerHTML =
         '<select data-k="mode" title="Tô màu theo">' +
         '<option value="ifc">Màu: theo IFC</option><option value="status">Màu: kết quả kiểm tra</option><option value="file">Màu: theo file</option>' +
@@ -79,8 +79,8 @@
       c.appendChild(this.info);
       this.legendEl = el("div", { class: "ttv-legend" });
       c.appendChild(this.legendEl);
-      this.status = el("div", { class: "ttv-status" }, "Đang tải mô hình...");
-      c.appendChild(this.status);
+      if (this.opts.statusEl) this.status = this.opts.statusEl;     // trạng thái hiển thị ở thanh dưới của ứng dụng
+      else { this.status = el("div", { class: "ttv-status" }, "Đang tải mô hình..."); c.appendChild(this.status); }
       if (this.opts.infoPanel === false) this.info.classList.add("ttv-hidden");
       if (this.opts.legend === false) this.legendEl.classList.add("ttv-hidden");
       this.help = el("div", { class: "ttv-help" + (this.opts.legend === false ? " ttv-hidden" : "") }, "Trái: xoay · Phải/Shift: di chuyển · Lăn: thu phóng · Nháy: chọn (Ctrl: chọn thêm) · Alt+kéo: chọn vùng · Chuột phải: menu · H ẩn · I cô lập · U hiện tất cả");
@@ -919,6 +919,9 @@
   .ttv-info hr{border:0;border-top:1px solid #e2e8f0;margin:6px 0}
   .ttv-x{float:right;cursor:pointer;color:#64748b}
   .ttv-hidden{display:none!important}
+  .ttv-bar.strip{position:absolute;top:0;left:0;right:0;height:34px;padding:4px 8px;margin:0;background:#f6f8fb;border-bottom:1px solid #dde3ea;align-items:center;flex-wrap:nowrap;overflow-x:auto;z-index:3}
+  .ttv-bar.strip>*{background:#fff;white-space:nowrap}
+  .ttv-canvas.below{top:34px}
   .ttv-box{position:absolute;display:none;border:1.5px dashed #1a73ff;background:rgba(26,115,255,.08);pointer-events:none;z-index:5}
   .ttv-menu{position:absolute;display:none;z-index:20;min-width:220px;background:#fff;border:1px solid #cfd6df;border-radius:8px;box-shadow:0 6px 24px rgba(0,0,0,.18);padding:4px}
   .ttv-menu button{display:flex;width:100%;justify-content:space-between;gap:16px;border:0;background:none;padding:6px 10px;border-radius:5px;cursor:pointer;font:inherit;color:inherit;text-align:left}

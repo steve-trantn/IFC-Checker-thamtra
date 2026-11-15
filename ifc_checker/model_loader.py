@@ -65,6 +65,7 @@ class ElementRecord:
     entity: object = field(repr=False, default=None)
     _index: dict | None = field(repr=False, default=None)
     schema: str = ""
+    container_guid: str = ""   # GlobalId không gian chứa (để dựng cây cấu trúc)
 
     # --- tra cứu thuộc tính theo tên đã chuẩn hoá ---
     def index(self) -> dict:
@@ -285,6 +286,7 @@ def build_record(path: str, e, kind: str) -> ElementRecord:
         type_name=_s(etype.Name) if etype is not None else "",
         type_class=etype.is_a() if etype is not None else "",
         container_name=_s(getattr(cont, "Name", "")) if cont is not None else "",
+        container_guid=_s(getattr(cont, "GlobalId", "")) if cont is not None else "",
         container_class=cont.is_a() if cont is not None else "",
         parent_guid=_s(getattr(parent, "GlobalId", "")) if parent is not None else "",
         is_part=is_part,

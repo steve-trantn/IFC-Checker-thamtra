@@ -78,6 +78,7 @@ async function init() {
   // chiều cao bảng dưới theo màn hình: ~30% (laptop) để khung 3D đủ lớn
   document.documentElement.style.setProperty("--dock-h", Math.max(150, Math.min(340, Math.round(window.innerHeight * 0.3))) + "px");
   S.viewer = new ThamTraViewer($("#viewer"), {
+    statusEl: $("#viewerStatus"), toolbarStrip: true,
     onPick: (p) => onPick(p),
     onSelect: (ids) => onSelectChange(ids),
     onBoxMode: (on) => $("#btnBox").classList.toggle("active", on),
@@ -166,13 +167,13 @@ async function refreshState() {
   const u = st.user;
   $("#userbox").innerHTML = u ? `${u.picture ? `<img src="${esc(u.picture)}" alt="" referrerpolicy="no-referrer">` : ""}<span title="${esc(u.email)}">${esc(u.name || u.email)}</span><a href="/auth/logout">Đăng xuất</a>` : "";
   $("#projName").textContent = st.project ? st.project.name : "Chưa chọn dự án";
-  $("#docname").textContent = (st.models.length ? `${st.models.length} file: ` + st.models.map((m) => m.file).join(" · ") : "") +
-    (st.project && st.last_saved ? `  ·  đã lưu tự động ${st.last_saved}` : "");
+  $("#docname").textContent = st.project && st.last_saved ? `đã lưu tự động ${st.last_saved}` : "";
   $("#addLbl").innerHTML = st.project ? "Thêm<br>file IFC" : "Mở<br>file IFC";
   $("#startAddLbl").textContent = st.project ? "Thêm file IFC vào dự án" : "Mở nhanh file IFC (không lưu)";
   $("#startProj").innerHTML = st.project && !st.models.length
-    ? `<p><b>📁 ${esc(st.project.name)}</b> chưa có file nào - bấm <b>Thêm file IFC vào dự án</b> hoặc kéo thả file vào đây.</p>` : "";
-  if (!st.models.length) renderRecent();
+    ? `<b>📁 ${esc(st.project.name)}</b> chưa có file nào - thêm file IFC hoặc kéo thả vào đây.`
+    : "Chưa có mô hình. Chọn dự án ở ô <b>📁</b> trên cùng, hoặc thêm file IFC.";
+  S.tree = null;
   $("#start").classList.toggle("hidden", st.models.length > 0);
   const r = st.result;
   $("#statusRight").textContent = `${st.models.length} file · ${fmt(st.models.reduce((a, m) => a + m.elements, 0))} đối tượng` +
@@ -286,47 +287,90 @@ function markRows(file, step) {
 }
 
 // ====================================================================== trình duyệt dự án
+const CLS_ICON = { IfcProject: "📘", IfcSite: "🌐", IfcBuilding: "🏢", IfcBuildingStorey: "▤", IfcSpace: "▢", IfcRoad: "🛣️",
+  IfcRoadPart: "🛣️", IfcBridge: "🌉", IfcBridgePart: "🌉", IfcRailway: "🚆", IfcFacility: "🏗️", IfcFacilityPart: "🏗️" };
 async function renderBrowser() {
   const st = S.state;
-  let h = '<ul class="tree">';
-  h += `<li><div class="row"><span class="tw">▾</span>🗂️ <b>Mô hình</b><span class="cnt">${st.models.length}</span></div><ul>`;
-  if (!S.health && st.models.length) { try { S.health = await api("/api/health"); } catch (e) { S.health = { classes: [] }; } }
-  for (const m of st.models) {
-    const cls = (S.health ? S.health.classes : []).filter((c) => c[0] === m.file);
-    h += `<li class="closed"><div class="row" data-file="${esc(m.file)}"><span class="tw">▸</span>${m.error ? "⛔" : m.warnings.length ? '<span class="warnicon">⚠</span>' : "📄"} ${esc(shortName(m.file))}` +
-      `<span class="acts"><button data-act="iso">Cô lập</button><button data-act="del">Đóng</button></span><span class="cnt">${fmt(m.elements)}</span></div><ul>`;
-    for (const c of cls.slice(0, 60)) {
-      h += `<li><div class="row" data-file="${esc(m.file)}" data-cls="${esc(c[1])}" title="${esc(c[2])}"><span class="tw"></span>${esc(c[1])}${c[2] && c[2] !== c[1] ? ` <span class="muted small">${esc(String(c[2]).slice(0, 24))}</span>` : ""}` +
-        `<span class="acts"><button data-act="hl">Tô sáng</button><button data-act="iso">Cô lập</button></span><span class="cnt">${fmt(c[3] + c[4])}</span></div></li>`;
-    }
-    h += "</ul></li>";
+  S.leftTab = S.leftTab || "tree";
+  $$("#browserPanel [data-lt]").forEach((b) => {
+    b.classList.toggle("on", b.dataset.lt === S.leftTab);
+    b.onclick = () => { S.leftTab = b.dataset.lt; renderBrowser(); };
+  });
+  if (S.leftTab === "qa") {
+    $("#browser").innerHTML = '<ul class="tree">' +
+      [["health", "🩺 Sức khỏe mô hình", ""], ["rules", "📋 Quy tắc BEP", `${st.rules.enabled}/${st.rules.count}`],
+       ["results", "✅ Kết quả kiểm tra", st.result ? st.result.compliance.toFixed(1) + "%" : ""],
+       ["clash", "⚠️ Xung đột", st.clash.count != null ? fmt(st.clash.count) : ""], ["drawing", "📐 Đối chiếu bản vẽ 2D", ""],
+       ["inventory", "🧾 Thống kê thuộc tính", ""]]
+        .map(([t, l, c]) => `<li><div class="row" data-tab="${t}"><span class="tw"></span>${l}<span class="cnt">${c}</span></div></li>`).join("") + "</ul>";
+    $$("#browser [data-tab]").forEach((r) => (r.onclick = () => showTab(r.dataset.tab)));
+    return;
   }
-  h += "</ul></li>";
-  h += `<li><div class="row"><span class="tw">▾</span>✅ <b>Kiểm tra chất lượng</b></div><ul>` +
-    [["health", "🩺 Sức khỏe mô hình"], ["rules", `📋 Quy tắc BEP <span class="cnt">${st.rules.enabled}/${st.rules.count}</span>`],
-     ["results", `✅ Kết quả <span class="cnt">${st.result ? st.result.compliance.toFixed(1) + "%" : ""}</span>`],
-     ["clash", `⚠️ Xung đột <span class="cnt">${st.clash.count != null ? fmt(st.clash.count) : ""}</span>`],
-     ["inventory", "🧾 Thống kê thuộc tính"]]
-      .map(([t, l]) => `<li><div class="row" data-tab="${t}"><span class="tw"></span>${l}</div></li>`).join("") + "</ul></li></ul>";
-  $("#browser").innerHTML = h;
+  if (!st.models.length) { $("#browser").innerHTML = '<div class="pad muted small">Chưa có file IFC.</div>'; return; }
+  if (!S.tree) { try { S.tree = await api("/api/tree"); } catch (e) { S.tree = { files: [] }; } }
+  S.treeOpen = S.treeOpen || new Set();
+  const acts = '<span class="acts"><button data-act="sel">Chọn</button><button data-act="iso">Cô lập</button><button data-act="hide">Ẩn</button></span>';
+  const groupRows = (file, cont, groups) => groups.map(([cls, n]) => {
+    const key = `g|${file}|${cont}|${cls}`;
+    return `<li class="${S.treeOpen.has(key) ? "" : "closed"}" data-key="${esc(key)}"><div class="row" data-file="${esc(file)}" data-cont="${esc(cont)}" data-cls="${esc(cls)}">
+      <span class="tw">${S.treeOpen.has(key) ? "▾" : "▸"}</span><span class="ic2">◆</span><span class="nm">${esc(cls)}</span>${acts}<span class="cnt">${fmt(n)}</span></div><ul class="items"></ul></li>`;
+  }).join("");
+  const nodeHtml = (file, n) => {
+    const key = `s|${file}|${n.id}`, open = S.treeOpen.has(key) || ["IfcProject", "IfcSite", "IfcBuilding", "IfcRoad", "IfcFacility", "IfcBridge"].includes(n.cls) && !S.treeOpen.has("x" + key);
+    return `<li class="${open ? "" : "closed"}" data-key="${esc(key)}"><div class="row" data-file="${esc(file)}" data-cont="${esc(n.id)}" data-rec="1" title="${esc(n.cls)}">
+      <span class="tw">${open ? "▾" : "▸"}</span><span class="ic2">${CLS_ICON[n.cls] || "▫"}</span><span class="nm">${esc(n.name || n.cls)}</span>${acts}<span class="cnt">${fmt(n.count)}</span></div>
+      <ul>${n.children.map((c) => nodeHtml(file, c)).join("")}${groupRows(file, n.id, n.groups)}</ul></li>`;
+  };
+  let h = '<ul class="tree">';
+  for (const f of S.tree.files) {
+    const m = st.models.find((x) => x.file === f.file) || {};
+    const key = `f|${f.file}`, open = !S.treeOpen.has("x" + key);
+    h += `<li class="${open ? "" : "closed"}" data-key="${esc(key)}"><div class="row" data-file="${esc(f.file)}" data-all="1" title="${esc(f.file)} · ${esc(f.schema)}">
+      <span class="tw">${open ? "▾" : "▸"}</span><span class="ic2">${m.warnings && m.warnings.length ? "⚠️" : "📄"}</span><span class="nm"><b>${esc(shortName(f.file))}</b></span>
+      <span class="acts"><button data-act="sel">Chọn</button><button data-act="iso">Cô lập</button><button data-act="hide">Ẩn</button><button data-act="del">Đóng</button></span><span class="cnt">${fmt(f.count)}</span></div>
+      <ul>${f.roots.map((n) => nodeHtml(f.file, n)).join("")}${f.orphans.length ? groupRows(f.file, "-", f.orphans) : ""}</ul></li>`;
+  }
+  $("#browser").innerHTML = h + "</ul>";
   $$("#browser .row").forEach((row) => {
     row.onclick = async (e) => {
-      const act = e.target.dataset.act;
-      const li = row.parentElement;
-      if (row.dataset.tab) return showTab(row.dataset.tab);
-      if (!act && li.querySelector("ul")) { li.classList.toggle("closed"); row.querySelector(".tw").textContent = li.classList.contains("closed") ? "▸" : "▾"; return; }
+      const act = e.target.dataset.act, li = row.parentElement, key = li.dataset.key;
+      if (!act) {                         // bấm vào tên: mở / đóng nhánh
+        const closing = !li.classList.contains("closed");
+        li.classList.toggle("closed");
+        row.querySelector(".tw").textContent = closing ? "▸" : "▾";
+        if (closing) { S.treeOpen.delete(key); S.treeOpen.add("x" + key); } else { S.treeOpen.add(key); S.treeOpen.delete("x" + key); }
+        if (!closing && row.dataset.cls) loadTreeItems(row, li.querySelector(".items"));
+        return;
+      }
       if (act === "del") {
         if (!confirm(`Đóng file ${row.dataset.file}?`)) return;
         await api(`/api/models/${encodeURIComponent(row.dataset.file)}`, { method: "DELETE" });
-        S.health = null; await refreshState(); await loadScene(); return;
+        S.health = null; S.tree = null; await refreshState(); await loadScene(); return;
       }
-      const q = new URLSearchParams({ file: row.dataset.file || "", ifc_class: row.dataset.cls || "" });
-      const r = await api("/api/select?" + q);
-      if (act === "iso") focusRefs(r.refs, { isolate: true });
-      else focusRefs(r.refs);
+      const q = new URLSearchParams({ file: row.dataset.file, container: row.dataset.all ? "" : row.dataset.cont || "", cls: row.dataset.cls || "", recursive: row.dataset.rec ? 1 : 0, limit: 1 });
+      const r = await api("/api/tree/items?" + q);
+      const ids = S.viewer.resolve(r.refs);
+      if (!ids.length) return toast("Không có đối tượng hình học");
+      if (act === "hide") { S.viewer.hide(ids); status(`Đã ẩn ${fmt(ids.length)} đối tượng`); return; }
+      if (act === "iso") S.viewer.isolate(ids);
+      S.viewer.select(ids, { zoom: act === "sel" });
       status(`${fmt(r.count)} đối tượng`);
     };
   });
+  $$("#browser li:not(.closed) > .row[data-cls]").forEach((row) => loadTreeItems(row, row.parentElement.querySelector(".items")));
+}
+async function loadTreeItems(row, ul) {
+  if (!ul || ul.dataset.loaded) return;
+  const q = new URLSearchParams({ file: row.dataset.file, container: row.dataset.cont || "", cls: row.dataset.cls, limit: 500 });
+  const r = await api("/api/tree/items?" + q);
+  ul.dataset.loaded = "1";
+  ul.innerHTML = r.items.map(([f, step, name]) => `<li><div class="row" data-f="${esc(f)}" data-s="${step}" title="#${step}"><span class="tw"></span><span class="nm">${esc(name || "#" + step)}</span></div></li>`).join("") +
+    (r.count > r.items.length ? `<li><div class="row muted small">… còn ${fmt(r.count - r.items.length)} đối tượng</div></li>` : "");
+  $$("[data-s]", ul).forEach((it) => (it.onclick = (e) => {
+    e.stopPropagation();
+    const ids = S.viewer.resolve([[it.dataset.f, +it.dataset.s]]);
+    if (ids.length) S.viewer.select(ids, { zoom: true }); else showProps(it.dataset.f, +it.dataset.s);
+  }));
 }
 const shortName = (f) => f.replace(/\.ifc$/i, "").split(/[-_]/).slice(-2).join("-");
 
