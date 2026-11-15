@@ -135,9 +135,20 @@ def ws_of(request: Request):
     return store.get(request.state.sid)
 
 
+def _asset_version() -> str:
+    """Dấu phiên bản theo thời điểm sửa file giao diện -> trình duyệt tải lại khi có cập nhật."""
+    files = [os.path.join(ROOT, "static", f) for f in ("app.js", "app.css")] + \
+            [os.path.join(VIEWER, f) for f in ("viewer.js", "three.min.js")]
+    return str(int(max(os.path.getmtime(f) for f in files if os.path.exists(f))))
+
+
 @app.get("/")
 def index():
-    return FileResponse(os.path.join(ROOT, "static", "index.html"))
+    v = _asset_version()
+    html = open(os.path.join(ROOT, "static", "index.html"), encoding="utf-8").read()
+    for a in ("/static/app.css", "/static/app.js", "/viewer/viewer.js", "/viewer/three.min.js"):
+        html = html.replace(f'"{a}"', f'"{a}?v={v}"')
+    return HTMLResponse(html, headers={"Cache-Control": "no-cache"})
 
 
 # ====================================================================== trạng thái

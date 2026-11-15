@@ -102,6 +102,11 @@
       this.scene.add(this.camLight);
       this._controls();
       window.addEventListener("resize", () => this.resize());
+      window.addEventListener("keydown", (e) => {
+        const t = e.target;
+        if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
+        if (e.key === "f" || e.key === "F" || e.key === "Home") { this.fitAll(); }
+      });
       if (window.ResizeObserver) new ResizeObserver(() => this.resize()).observe(this.canvasWrap);
     }
 
@@ -111,6 +116,7 @@
       this.renderer.setSize(w, h);
       this.camera.aspect = w / h;
       this.camera.updateProjectionMatrix();
+      if (this._autoFit && this.bounds) this.fitAll();
       this._render();
     }
 
@@ -139,6 +145,7 @@
       let mode = null, sx = 0, sy = 0, moved = false;
       dom.addEventListener("contextmenu", (e) => e.preventDefault());
       dom.addEventListener("pointerdown", (e) => {
+        this._autoFit = false;
         mode = e.button === 2 || e.button === 1 || e.shiftKey ? "pan" : "rot";
         sx = e.clientX; sy = e.clientY; moved = false;
         dom.setPointerCapture(e.pointerId);
@@ -175,6 +182,7 @@
       dom.addEventListener("dblclick", (e) => this._pick(e, true));
       dom.addEventListener("wheel", (e) => {
         e.preventDefault();
+        this._autoFit = false;
         const f = Math.pow(1.0015, e.deltaY);
         const off = this.camera.position.clone().sub(this.target).multiplyScalar(f);
         this.camera.position.copy(this.target).add(off);
@@ -247,7 +255,11 @@
       this._rebuildIndex();
       this._buildClashMarkers();
       this._computeBounds();
+      this._autoFit = true;
+      this.resize();
       this.fitAll();
+      // bố cục trang có thể còn thay đổi (ẩn màn hình chào, bảng dưới...) -> căn lại vài lần đầu
+      [80, 300, 800].forEach((ms) => setTimeout(() => { if (this._autoFit) { this.resize(); this.fitAll(); } }, ms));
       this._legend();
       const n = meta.objects.length;
       this.baseStatus = `${n.toLocaleString()} đối tượng · ${meta.ntris.toLocaleString()} tam giác` +
@@ -415,18 +427,73 @@
     }
 
     // ------------------------------------------------------------------ camera
-    _flyToBox(box) {
+    /** Lấy mẫu toạ độ đỉnh (của các đối tượng 'ids', hoặc toàn bộ) để căn camera theo hình thật. */
+    _samplePoints(ids, max = 40000) {
+      const pos = this.geom && this.geom.getAttribute("position");
+      if (!pos) return null;
+      const a = pos.array, out = [];
+      if (!ids) {
+        const n = pos.count, step = Math.max(1, Math.floor(n / max));
+        for (let i = 0; i < n; i += step) out.push(a[i * 3], a[i * 3 + 1], a[i * 3 + 2]);
+      } else {
+        let total = 0;
+        for (const i of ids) total += this.meta.objects[i][7];
+        const step = Math.max(1, Math.floor(total / max));
+        for (const i of ids) {
+          const o = this.meta.objects[i];
+          for (let k = o[6]; k < o[6] + o[7]; k += step) out.push(a[k * 3], a[k * 3 + 1], a[k * 3 + 2]);
+        }
+      }
+      return out.length ? out : null;
+    }
+
+    _flyToBox(box, pts) {
       const center = box.getCenter(new T.Vector3());
       const size = Math.max(box.getSize(new T.Vector3()).length(), 1);
       const dir = this.camera.position.clone().sub(this.target).normalize();
       if (!isFinite(dir.x) || dir.lengthSq() < 0.5) dir.set(0.6, -0.6, 0.5).normalize();
-      const dist = (size * 0.55) / Math.tan((this.camera.fov * Math.PI) / 360);
+      // căn khít: chiếu 8 góc hộp bao lên mặt phẳng camera, chọn khoảng cách nhỏ nhất để thấy trọn (lề 8%)
+      const vfov = (this.camera.fov * Math.PI) / 180;
+      const tanV = Math.tan(vfov / 2), tanH = tanV * Math.max(0.2, this.camera.aspect || 1);
+      const fwd = dir.clone().negate();
+      let right = new T.Vector3().crossVectors(fwd, this.camera.up);
+      if (right.lengthSq() < 1e-6) right.set(1, 0, 0);
+      right.normalize();
+      const up = new T.Vector3().crossVectors(right, fwd).normalize();
+      let dist = 0;
+      const fitPoint = (x, y, z) => {
+        const vx = x - center.x, vy = y - center.y, vz = z - center.z;
+        const zc = vx * dir.x + vy * dir.y + vz * dir.z;
+        const px = Math.abs(vx * right.x + vy * right.y + vz * right.z);
+        const py = Math.abs(vx * up.x + vy * up.y + vz * up.z);
+        dist = Math.max(dist, zc + px / tanH, zc + py / tanV);
+      };
+      if (pts && pts.length) {
+        // căn theo hình thật: dịch tâm về giữa vùng hình chiếu rồi tính khoảng cách
+        let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+        for (let i = 0; i < pts.length; i += 3) {
+          const vx = pts[i] - center.x, vy = pts[i + 1] - center.y, vz = pts[i + 2] - center.z;
+          const px = vx * right.x + vy * right.y + vz * right.z, py = vx * up.x + vy * up.y + vz * up.z;
+          if (px < minX) minX = px; if (px > maxX) maxX = px; if (py < minY) minY = py; if (py > maxY) maxY = py;
+        }
+        center.add(right.clone().multiplyScalar((minX + maxX) / 2)).add(up.clone().multiplyScalar((minY + maxY) / 2));
+        for (let i = 0; i < pts.length; i += 3) fitPoint(pts[i], pts[i + 1], pts[i + 2]);
+        dist *= 1.06;
+      } else {
+        for (const x of [box.min.x, box.max.x]) for (const y of [box.min.y, box.max.y]) for (const z of [box.min.z, box.max.z]) fitPoint(x, y, z);
+        dist *= 1.08;
+      }
+      dist = Math.max(dist, size * 0.05);
       this.target.copy(center);
       this.camera.position.copy(center).add(dir.multiplyScalar(dist));
       this._render();
     }
 
-    fitAll() { if (this.bounds) this._flyToBox(this.isolateSet ? this._boxOf([...this.isolateSet]) : this.bounds); }
+    fitAll() {
+      if (!this.bounds) return;
+      const ids = this.isolateSet ? [...this.isolateSet] : null;
+      this._flyToBox(ids ? this._boxOf(ids) : this.bounds, this._samplePoints(ids));
+    }
 
     // ------------------------------------------------------------------ API cho ứng dụng
     /** refs: [[file, step], ...] -> chỉ số đối tượng 3D (đối tượng không có hình học thì lấy các con) */

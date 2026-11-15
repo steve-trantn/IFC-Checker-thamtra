@@ -75,6 +75,8 @@ async function upload(path, files, field = "file") {
 // ====================================================================== khởi động
 async function init() {
   $("#ttv-css").textContent = ThamTraViewer.CSS;
+  // chiều cao bảng dưới theo màn hình: ~30% (laptop) để khung 3D đủ lớn
+  document.documentElement.style.setProperty("--dock-h", Math.max(150, Math.min(340, Math.round(window.innerHeight * 0.3))) + "px");
   S.viewer = new ThamTraViewer($("#viewer"), { onPick: (p) => onPick(p) });
   bindUI();
   await refreshState();
@@ -108,6 +110,7 @@ function bindUI() {
   $("#btnColor").onclick = () => { S.viewer.setColorMode("status"); toast("Đỏ = lỗi · Vàng = cảnh báo · Xanh = đạt"); };
   $("#btnIsoFail").onclick = isolateFailing;
   $("#btnShowAll").onclick = () => { S.viewer.clearIsolate(); S.viewer.clearSelection(); };
+  $("#btnFit").onclick = () => { S.viewer.resize(); S.viewer.fitAll(); };
   $("#btnAI").onclick = () => toggleAI();
   $("#aiClose").onclick = () => toggleAI(false);
   $("#aiSend").onclick = askAI;
@@ -146,6 +149,7 @@ async function loadScene() {
     const j = await runJob(api("/api/scene", { method: "POST" }));
     void j;
     const [meta, data] = await Promise.all([api("/api/scene/meta"), api("/api/scene/data")]);
+    $("#start").classList.add("hidden");     // ẩn màn hình chào trước khi căn camera
     S.viewer.load(meta, data);
     S.sceneKey = meta;
     status(`Mô hình 3D: ${fmt(meta.objects.length)} đối tượng`);
