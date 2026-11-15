@@ -16,7 +16,7 @@ import numpy as np
 def run(path: str, out_npz: str, library: str) -> int:
     import ifcopenshell
 
-    from .geometry import _iterate, _sanitize
+    from .geometry import DEFAULT_RGB, _iterate, _sanitize
     from .model_loader import EXCLUDED_ELEMENT_CLASSES
 
     f = ifcopenshell.open(path)
@@ -52,6 +52,8 @@ def run(path: str, out_npz: str, library: str) -> int:
         faces=np.concatenate([m.faces for m in meshes]) if meshes else np.zeros((0, 3), np.int32),
         vcount=vcount, fcount=fcount,
         bboxes=np.array([m.bbox for m in meshes]) if meshes else np.zeros((0, 2, 3)),
+        colors=np.concatenate([m.colors if m.colors is not None else np.tile(DEFAULT_RGB, (len(m.local), 1))
+                               for m in meshes]) if meshes else np.zeros((0, 3), np.uint8),
     )
     print(f"P {len(elements)} {len(elements)}", flush=True)
     return 0

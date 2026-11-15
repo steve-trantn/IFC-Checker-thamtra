@@ -60,7 +60,7 @@
       const bar = el("div", { class: "ttv-bar" });
       bar.innerHTML =
         '<select data-k="mode" title="Tô màu theo">' +
-        '<option value="status">Màu: kết quả kiểm tra</option><option value="file">Màu: theo file</option>' +
+        '<option value="ifc">Màu: theo IFC</option><option value="status">Màu: kết quả kiểm tra</option><option value="file">Màu: theo file</option>' +
         '<option value="class">Màu: theo lớp IFC</option></select>' +
         '<label><input type="checkbox" data-k="hideOk"> Ẩn đối tượng đạt</label>' +
         '<label><input type="checkbox" data-k="isolate" checked> Làm mờ phần còn lại</label>' +
@@ -81,7 +81,9 @@
       c.appendChild(this.legendEl);
       this.status = el("div", { class: "ttv-status" }, "Đang tải mô hình...");
       c.appendChild(this.status);
-      this.help = el("div", { class: "ttv-help" }, "Trái: xoay · Phải/Shift: di chuyển · Lăn: thu phóng · Nháy: chọn (Ctrl: chọn thêm) · Alt+kéo: chọn vùng · Chuột phải: menu · H ẩn · I cô lập · U hiện tất cả");
+      if (this.opts.infoPanel === false) this.info.classList.add("ttv-hidden");
+      if (this.opts.legend === false) this.legendEl.classList.add("ttv-hidden");
+      this.help = el("div", { class: "ttv-help" + (this.opts.legend === false ? " ttv-hidden" : "") }, "Trái: xoay · Phải/Shift: di chuyển · Lăn: thu phóng · Nháy: chọn (Ctrl: chọn thêm) · Alt+kéo: chọn vùng · Chuột phải: menu · H ẩn · I cô lập · U hiện tất cả");
       c.appendChild(this.help);
     }
 
@@ -224,6 +226,7 @@
       const g = new T.BufferGeometry();
       g.setAttribute("position", new T.BufferAttribute(pos, 3));
       this.colors = new Float32Array(meta.nverts * 3);
+      this.ifcColors = meta.colOffset ? new Uint8Array(buffer, meta.colOffset, meta.nverts * 3) : null;
       g.setAttribute("color", new T.BufferAttribute(this.colors, 3));
       this.geom = g;
       this.mat = new T.MeshPhongMaterial({ vertexColors: true, flatShading: true, side: T.DoubleSide, shininess: 12 });
@@ -276,7 +279,8 @@
       this.scene.add(this.proxyMesh);
       this.proxyIds = new Uint32Array(0);
       // chưa có kết quả kiểm tra -> tô màu theo file cho dễ phân biệt
-      if (!this._userColorMode) this.setColorMode(meta.objects.some((o) => o[5] >= 0) ? "status" : "file");
+      if (!this._userColorMode) this.setColorMode(this.ifcColors ? "ifc" : (meta.objects.some((o) => o[5] >= 0) ? "status" : "file"));
+      else if (this.colorMode === "ifc" && !this.ifcColors) this.setColorMode("file");
       this._recolor();
       this._rebuildIndex();
       this._buildClashMarkers();
@@ -318,12 +322,19 @@
       const col = this.colors;
       const ca = this.activeClash ? this.activeClash.a : -1, cb = this.activeClash ? this.activeClash.b : -1;
       const sel = this.activeClash ? new Set() : new Set(this.selected);
+      const ifc = this.colorMode === "ifc" && this.ifcColors;
       this.meta.objects.forEach((o, i) => {
-        let c = this._objColor(o);
+        let c = null;
         if (i === ca) c = [0.85, 0.12, 0.75];       // đối tượng A: tím hồng
         else if (i === cb) c = [0.12, 0.5, 0.95];   // đối tượng B: xanh
         else if (sel.has(i)) c = SEL;
         const v0 = o[6], vn = o[7];
+        if (!c && ifc) {                             // màu gốc IFC theo từng đỉnh
+          const src = this.ifcColors;
+          for (let k = v0 * 3, e = (v0 + vn) * 3; k < e; k++) col[k] = src[k] / 255;
+          return;
+        }
+        c = c || this._objColor(o);
         for (let k = v0 * 3, e = (v0 + vn) * 3; k < e; k += 3) { col[k] = c[0]; col[k + 1] = c[1]; col[k + 2] = c[2]; }
       });
       this.geom.getAttribute("color").needsUpdate = true;
@@ -627,6 +638,7 @@
         `<hr><div><i class="ttv-sw" style="background:#1f80f2"></i>B: ${name(c.b)}</div>`;
       this.info.style.display = "block";
       this.info.querySelector(".ttv-x").onclick = () => (this.info.style.display = "none");
+      if (this.opts.onClashFocus) this.opts.onClashFocus(c);
     }
 
     _subIndex(ids) {
@@ -752,6 +764,17 @@
       objs.forEach((o, i) => { if (vals.has(o[col]) && !this.hiddenSet.has(i) && (!this.isolateSet || this.isolateSet.has(i))) ids.push(i); });
       this.select(ids);
     }
+    /** Xoá mô hình khỏi trình xem (giải phóng bộ nhớ). */
+    clear() {
+      for (const k of ["mesh", "hlMesh", "xrMesh", "proxyMesh", "clashMesh", "overlay", "markers"]) {
+        if (this[k]) { this.scene.remove(this[k]); if (this[k].geometry) this[k].geometry.dispose(); this[k] = null; }
+      }
+      this.meta = null; this.bounds = null; this.selected = []; this.hiddenSet = new Set(); this.isolateSet = null;
+      this.baseStatus = ""; this.status.textContent = ""; this.info.style.display = "none"; this.legendEl.innerHTML = "";
+      if (this.opts.onLegend) this.opts.onLegend([], this.colorMode);
+      this._render();
+    }
+
     // ------------------------------------------------------------------ bản vẽ 2D phủ lên mô hình
     /** segs: Float32Array (x1,y1,x2,y2) toạ độ tương đối gốc cảnh; vẽ ở cao độ z (mặc định: trên đỉnh mô hình). */
     setOverlay(segs, opts = {}) {
@@ -868,10 +891,17 @@
     _legend() {
       if (!this.meta) return;
       let items = [];
-      if (this.colorMode === "status") items = [2, 1, 0, -1].map((k) => [STATUS[k], STATUS_TXT[k]]);
+      if (this.colorMode === "ifc") items = [];
+      else if (this.colorMode === "status") items = [2, 1, 0, -1].map((k) => [STATUS[k], STATUS_TXT[k]]);
       else if (this.colorMode === "file") items = this.meta.files.map((f, i) => [PALETTE[i % PALETTE.length], f]);
       else items = this.meta.classes.slice(0, 14).map((c, i) => [PALETTE[(i * 5) % PALETTE.length], c]);
       const rgb = (c) => `rgb(${Math.round(c[0] * 255)},${Math.round(c[1] * 255)},${Math.round(c[2] * 255)})`;
+      if (this.opts.onLegend) {
+        const list = items.map(([c, t]) => [rgb(c), t]);
+        if (this.colorMode === "ifc") list.push(["linear-gradient(90deg,#5f994c,#0000ff,#b2b6be)", "Màu gốc trong IFC (IfcSurfaceStyle)"]);
+        if (this.meta.clashes.length) list.push(["#e0115f", "Điểm xung đột"]);
+        this.opts.onLegend(list, this.colorMode);
+      }
       this.legendEl.innerHTML = items.map(([c, t]) => `<div><i style="background:${rgb(c)}"></i>${esc(t)}</div>`).join("") +
         (this.meta.clashes.length ? `<div><i style="background:#e0115f;border-radius:50%"></i>Điểm xung đột</div>` : "");
     }
@@ -888,6 +918,7 @@
   .ttv-info ul{margin:6px 0 0 16px;padding:0}.ttv-info li{margin:2px 0;color:#9b1c1c}
   .ttv-info hr{border:0;border-top:1px solid #e2e8f0;margin:6px 0}
   .ttv-x{float:right;cursor:pointer;color:#64748b}
+  .ttv-hidden{display:none!important}
   .ttv-box{position:absolute;display:none;border:1.5px dashed #1a73ff;background:rgba(26,115,255,.08);pointer-events:none;z-index:5}
   .ttv-menu{position:absolute;display:none;z-index:20;min-width:220px;background:#fff;border:1px solid #cfd6df;border-radius:8px;box-shadow:0 6px 24px rgba(0,0,0,.18);padding:4px}
   .ttv-menu button{display:flex;width:100%;justify-content:space-between;gap:16px;border:0;background:none;padding:6px 10px;border-radius:5px;cursor:pointer;font:inherit;color:inherit;text-align:left}

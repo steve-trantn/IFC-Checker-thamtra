@@ -127,6 +127,7 @@ def save_project(ws, owner: str, name: str, pid: str | None = None, progress=Non
         keep.add(m.file_name)
         if os.path.abspath(m.path) != os.path.abspath(dst) and os.path.exists(m.path):
             shutil.copy2(m.path, dst)
+            m.path = dst                    # lần lưu sau không chép lại
     for f in os.listdir(os.path.join(pdir, "ifc")):        # bỏ file đã đóng khỏi dự án
         if f not in keep:
             os.remove(os.path.join(pdir, "ifc", f))
@@ -210,6 +211,29 @@ def open_project(ws, owner: str, pid: str, progress=None) -> dict:
     ws.scene, ws.scene_dirty = None, True
     ws.project = {"id": d.get("id", pid), "name": d.get("name", ""), "owner": owner}
     return {"id": pid, "name": d.get("name", ""), "models": len(ws.models)}
+
+
+def project_ifc_dir(owner: str, pid: str) -> str:
+    d = os.path.join(owner_dir(owner), _safe_id(pid), "ifc")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def reset_workspace(ws) -> None:
+    """Không gian làm việc trống cho dự án mới (giữ cài đặt AI / chế độ kiểm tra)."""
+    from ifc_checker.clash import default_matrix
+    from ifc_checker.rules import default_ruleset
+    ws.models = {}
+    ws.ruleset = default_ruleset()
+    ws.result = None
+    ws.clash_tests = default_matrix()
+    ws.clash_run = None
+    ws.scene, ws.scene_dirty = None, True
+    ws.ai_summary = ""
+    ws.extra_files = {}
+    ws.drawing_state = None
+    ws.drawing = None
+    ws.project = None
 
 
 def delete_project(owner: str, pid: str) -> None:

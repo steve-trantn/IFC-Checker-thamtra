@@ -14,7 +14,11 @@
 <header class="titlebar">
   <div class="logo">TT</div>
   <div class="appname">Thẩm Tra Mô Hình BIM</div>
-  <div class="docname" id="docname">Chưa mở mô hình</div>
+  <div class="projsel">
+    <button class="projbtn" id="projBtn" title="Chọn / chuyển dự án">📁 <span id="projName">Chưa chọn dự án</span> ▾</button>
+    <div class="projmenu" id="projMenu"></div>
+  </div>
+  <div class="docname" id="docname"></div>
   <div class="spacer"></div>
   <div class="credit" id="credit"></div>
   <div class="userbox" id="userbox"></div>
@@ -22,12 +26,13 @@
 
 <nav class="ribbon">
   <div class="rgroup"><div class="rbtns">
-    <button class="rbtn" id="btnProjOpen" title="Mở dự án đã lưu"><span class="ic">🗂️</span>Dự án</button>
+    <button class="rbtn" id="btnProjNew" title="Tạo dự án mới"><span class="ic">＋</span>Dự án<br>mới</button>
+    <button class="rbtn" id="btnProjOpen" title="Quản lý dự án đã lưu"><span class="ic">🗂️</span>Dự án</button>
     <button class="rbtn" id="btnProjSave" title="Lưu dự án (file IFC, quy tắc, ma trận, kết quả)"><span class="ic">💾</span>Lưu</button>
     <button class="rbtn" id="btnProjSaveAs" title="Lưu thành dự án mới"><span class="ic">📑</span>Lưu<br>thành...</button>
   </div><div class="rlabel">Dự án</div></div>
   <div class="rgroup"><div class="rbtns">
-    <label class="rbtn" title="Mở 1 hoặc nhiều file IFC"><input type="file" id="fileInput" accept=".ifc" multiple hidden><span class="ic">📂</span>Mở IFC</label>
+    <label class="rbtn" title="Thêm 1 hoặc nhiều file IFC vào dự án"><input type="file" id="fileInput" accept=".ifc" multiple hidden><span class="ic">📂</span><span id="addLbl">Thêm<br>file IFC</span></label>
     <button class="rbtn" data-dock="health"><span class="ic">🩺</span>Sức khỏe<br>mô hình</button>
   </div><div class="rlabel">Mô hình</div></div>
   <div class="rgroup"><div class="rbtns">
@@ -74,6 +79,10 @@
       <div class="phead">Trình duyệt dự án</div>
       <div class="pbody" id="browser"></div>
     </section>
+    <section class="panel legendpanel" id="legendPanel">
+      <div class="phead">Chú giải màu <span class="spacer"></span><span class="muted small" id="legendMode"></span></div>
+      <div class="pbody" id="legend"></div>
+    </section>
   </aside>
 
   <section class="center">
@@ -84,8 +93,11 @@
           <div class="bigicon">🏗️</div>
           <h1>Mô hình của bạn.<br>Thẩm tra rõ ràng hơn.</h1>
           <p>Mở file IFC (IFC2X3 / IFC4 / IFC4.3 hạ tầng) để kiểm tra thông tin theo BEP, phát hiện xung đột và hỏi đáp mô hình bằng tiếng Việt.</p>
-          <label class="btn primary"><input type="file" id="fileInput2" accept=".ifc" multiple hidden>📂 Mở file IFC</label>
-          <div class="muted small">hoặc kéo thả file .ifc vào đây · có thể mở nhiều file của nhiều bộ môn</div>
+          <div id="startProj"></div>
+          <div class="startbtns"><button class="btn primary" id="startNew">＋ Tạo dự án mới</button>
+          <label class="btn"><input type="file" id="fileInput2" accept=".ifc" multiple hidden>📂 <span id="startAddLbl">Mở nhanh file IFC</span></label></div>
+          <div class="muted small">hoặc kéo thả file .ifc vào đây · có thể thêm nhiều file của nhiều bộ môn</div>
+          <div id="startRecent"></div>
         </div>
       </div>
       <div class="dropmask" id="dropmask">Thả file IFC để mở</div>

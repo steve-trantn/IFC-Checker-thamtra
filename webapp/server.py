@@ -159,7 +159,7 @@ def state(request: Request):
     return {
         "app": {"name": APP_NAME, "version": __version__, "author": AUTHOR, "phone": AUTHOR_PHONE},
         "user": getattr(request.state, "user", None), "auth": auth.describe(),
-        "project": ws.project,
+        "project": ws.project, "last_saved": getattr(ws, "last_saved", None),
         "models": [{"file": m.file_name, "schema": m.schema, "app": m.application, "project": m.project_name,
                     "elements": len(m.elements), "parts": m.part_count, "error": m.error, "warnings": m.warnings,
                     "proxies": sum(1 for r in m.elements if r.ifc_class == "IfcBuildingElementProxy"),
@@ -201,7 +201,11 @@ async def upload(request: Request, files: list[UploadFile] = File(...)):
         name = safe_name(f.filename)
         if not name.lower().endswith(".ifc"):
             continue
-        p = os.path.join(ws.tmpdir, name)
+        folder = ws.tmpdir
+        if ws.project:
+            from .projects import project_ifc_dir
+            folder = project_ifc_dir(_owner(request), ws.project["id"])
+        p = os.path.join(folder, name)
         with open(p, "wb") as out:
             while chunk := await f.read(1 << 20):
                 out.write(chunk)
@@ -217,7 +221,9 @@ async def upload(request: Request, files: list[UploadFile] = File(...)):
                 release_ifc(m)          # giữ thuộc tính, bỏ file IFC khỏi RAM (mở lại khi cần)
             ws.models[m.file_name] = m
         ws.scene_dirty = True
+        _autosave(ws, owner)
         return len(paths)
+    owner = _owner(request)
     return ws.start_job("Đọc file IFC", work).to_dict()
 
 
@@ -227,6 +233,7 @@ def remove_model(name: str, request: Request):
     _need_idle(ws)
     ws.models.pop(name, None)
     ws.scene_dirty = True
+    _autosave(ws, _owner(request))
     return {"ok": True}
 
 
@@ -356,6 +363,7 @@ async def rules_put(request: Request):
         if r.id or r.name:
             rules.append(r.normalized())
     ws.ruleset.rules = rules
+    _autosave(ws, _owner(request))
     return _rules_json(ws)
 
 
@@ -460,7 +468,9 @@ def check(request: Request):
         res.ai_summary = ws.ai_summary
         ws.result = res
         ws.scene_dirty = True
+        _autosave(ws, owner)
         return res.totals()
+    owner = _owner(request)
     return ws.start_job("Kiểm tra theo bộ quy tắc", work).to_dict()
 
 
@@ -505,6 +515,7 @@ def clash_tests(request: Request):
 async def clash_tests_put(request: Request):
     ws = ws_of(request)
     ws.clash_tests = tests_from_records((await request.json()).get("tests", []))
+    _autosave(ws, _owner(request))
     return {"tests": tests_to_records(ws.clash_tests)}
 
 
@@ -550,7 +561,9 @@ def clash_run(request: Request):
         if ws.result is not None:
             ws.result.clashes, ws.result.clash_messages = run.clashes, run.messages
         ws.scene_dirty = True
+        _autosave(ws, owner)
         return len(run.clashes)
+    owner = _owner(request)
     return ws.start_job("Kiểm tra xung đột", work).to_dict()
 
 
@@ -669,7 +682,9 @@ async def drawing_upload(request: Request, file: UploadFile = File(...)):
         ws.drawing = dw
         ws.extra_files["drawing"] = p
         ws.drawing_state = {"file": name, "config": _asdict(cfg), "result": None}
+        _autosave(ws, owner)
         return len(dw.points)
+    owner = _owner(request)
     return ws.start_job("Đọc bản vẽ 2D", work).to_dict()
 
 
@@ -699,7 +714,9 @@ async def drawing_compare(request: Request):
         progress(0, 1, "Đang đối chiếu mô hình với bản vẽ...")
         res = compare(dw, models, cfg)
         ws.drawing_state = {"file": os.path.basename(dw.path), "config": res["config"], "result": res}
+        _autosave(ws, owner)
         return res["summary"]
+    owner = _owner(request)
     return ws.start_job("Đối chiếu bản vẽ", work).to_dict()
 
 
@@ -755,6 +772,34 @@ def _owner(request: Request) -> str:
     return u["email"] if u else "local"
 
 
+def _autosave(ws, owner: str) -> None:
+    """Đang mở dự án -> lưu lại (lỗi lưu không làm hỏng thao tác chính)."""
+    if not ws.project:
+        return
+    try:
+        from .projects import save_project
+        save_project(ws, owner, ws.project.get("name", "Dự án"), ws.project["id"])
+        ws.last_saved = time.strftime("%H:%M:%S")
+    except Exception:
+        import traceback
+        traceback.print_exc()
+
+
+@app.post("/api/projects/new")
+async def projects_new(request: Request):
+    from .projects import reset_workspace, save_project
+    ws = ws_of(request)
+    _need_idle(ws)
+    name = ((await request.json()).get("name") or "").strip()[:120]
+    if not name:
+        raise HTTPException(400, "Cần nhập tên dự án")
+    owner = _owner(request)
+    _autosave(ws, owner)            # lưu dự án đang mở trước khi tạo mới
+    reset_workspace(ws)
+    info = save_project(ws, owner, name, None)
+    return {"project": info}
+
+
 @app.get("/api/projects")
 def projects_list(request: Request):
     from .projects import list_projects
@@ -781,7 +826,13 @@ def projects_open(pid: str, request: Request):
     ws = ws_of(request)
     _need_idle(ws)
     owner = _owner(request)
-    return ws.start_job("Mở dự án", lambda progress: open_project(ws, owner, pid, progress)).to_dict()
+
+    def work(progress):
+        if ws.project and ws.project.get("id") != pid:
+            progress(0, 1, "Lưu dự án đang mở...")
+            _autosave(ws, owner)
+        return open_project(ws, owner, pid, progress)
+    return ws.start_job("Mở dự án", work).to_dict()
 
 
 @app.delete("/api/projects/{pid}")
@@ -790,7 +841,8 @@ def projects_delete(pid: str, request: Request):
     ws = ws_of(request)
     delete_project(_owner(request), pid)
     if ws.project and ws.project.get("id") == pid:
-        ws.project = None
+        from .projects import reset_workspace
+        reset_workspace(ws)
     return {"ok": True}
 
 

@@ -34,6 +34,7 @@ class Mesh:
     offset: np.ndarray   # (3,) float64
     faces: np.ndarray    # (m, 3) int32
     bbox: np.ndarray     # (2, 3) float64, toạ độ thế giới
+    colors: np.ndarray | None = None   # (n, 3) uint8 - màu IFC (IfcSurfaceStyle) theo đỉnh
 
     @property
     def verts(self) -> np.ndarray:
@@ -55,6 +56,37 @@ def _sanitize(f) -> None:
                 r.Items = good
     except Exception:
         pass
+
+
+DEFAULT_RGB = np.array([178, 182, 190], dtype=np.uint8)
+
+
+def _vertex_colors(g, nverts: int, faces: np.ndarray) -> np.ndarray:
+    """Màu từng đỉnh theo vật liệu hiển thị của từng mặt (IfcSurfaceStyleShading/Rendering -> SurfaceColour).
+    Đối tượng không có kiểu bề mặt dùng màu mặc định theo lớp của IfcOpenShell."""
+    vc = np.empty((nverts, 3), dtype=np.uint8)
+    vc[:] = DEFAULT_RGB
+    try:
+        mats = g.materials
+        if not len(mats):
+            return vc
+        pal = []
+        for m in mats:
+            d = m.diffuse
+            rgb = [d.r(), d.g(), d.b()]
+            if any(x != x for x in rgb):          # NaN -> chưa khai báo màu
+                pal.append(DEFAULT_RGB / 255.0)
+            else:
+                pal.append([min(1.0, max(0.0, x)) for x in rgb])
+        pal = (np.asarray(pal) * 255 + 0.5).astype(np.uint8)
+        mids = np.asarray(g.material_ids, dtype=np.int64)
+        if len(mids) == len(faces) and mids.min(initial=0) >= 0 and mids.max(initial=0) < len(pal):
+            vc[faces.reshape(-1)] = np.repeat(pal[mids], 3, axis=0)
+        else:
+            vc[:] = pal[0]
+    except Exception:
+        pass
+    return vc
 
 
 def _iterate(f, elements, library, out, offset_holder, progress, cancel, label, total, done0=0):
@@ -84,7 +116,7 @@ def _iterate(f, elements, library, out, offset_holder, progress, cancel, label, 
                 offset_holder[0] = np.round(v.mean(axis=0), 0)
             off = offset_holder[0]
             out[sh.id] = Mesh(sh.id, sh.guid, (v - off).astype(np.float32), off, fc,
-                              np.vstack([v.min(axis=0), v.max(axis=0)]))
+                              np.vstack([v.min(axis=0), v.max(axis=0)]), _vertex_colors(g, len(v), fc))
         n += 1
         if progress and n % 200 == 0:
             progress(n, total, f"{label}: {n}/{total}")
@@ -122,10 +154,12 @@ def _compute_subprocess(model: ModelInfo, progress=None, cancel=None, threads: i
             verts, faces, off = d["verts"], d["faces"], d["offset"]
             ids, guids, vcount, fcount, bboxes = (d["ids"].tolist(), d["guids"].tolist(), d["vcount"].tolist(),
                                                   d["fcount"].tolist(), d["bboxes"])
+            cols = d["colors"] if "colors" in d.files else None
         out: dict[int, Mesh] = {}
         vs = fs = 0
         for sid, g, vc, fc, bb in zip(ids, guids, vcount, fcount, bboxes):
-            out[sid] = Mesh(sid, g, verts[vs:vs + vc], off, faces[fs:fs + fc], bb)
+            out[sid] = Mesh(sid, g, verts[vs:vs + vc], off, faces[fs:fs + fc], bb,
+                            cols[vs:vs + vc] if cols is not None else None)
             vs += vc
             fs += fc
         return out

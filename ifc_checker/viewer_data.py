@@ -43,7 +43,7 @@ def build_scene(models: list[ModelInfo], result=None, clash_run=None, progress=N
     class_idx: dict[str, int] = {}
     obj_index: dict[tuple, int] = {}
     issues_out: dict[str, list] = {}
-    pos_parts, idx_parts = [], []
+    pos_parts, idx_parts, col_parts = [], [], []
     vbase = tbase = 0
     for fi, m in enumerate(models):
         files.append(m.file_name)
@@ -95,6 +95,8 @@ def build_scene(models: list[ModelInfo], result=None, clash_run=None, progress=N
                 issues_out[str(oi)] = msgs[src]
             pos_parts.append(v.reshape(-1))
             idx_parts.append(f.reshape(-1))
+            col_parts.append((mesh.colors if mesh.colors is not None
+                              else np.tile(np.array([178, 182, 190], np.uint8), (len(v), 1))).reshape(-1))
             vbase += len(v)
             tbase += len(f)
 
@@ -109,7 +111,8 @@ def build_scene(models: list[ModelInfo], result=None, clash_run=None, progress=N
 
     pos = np.concatenate(pos_parts) if pos_parts else np.zeros(0, np.float32)
     idx = np.concatenate(idx_parts) if idx_parts else np.zeros(0, np.uint32)
-    data = pos.astype("<f4").tobytes() + idx.astype("<u4").tobytes()
+    cols = np.concatenate(col_parts).astype(np.uint8) if col_parts else np.zeros(0, np.uint8)
+    data = pos.astype("<f4").tobytes() + idx.astype("<u4").tobytes() + cols.tobytes()
     meta = {
         "version": 1,
         "origin": [float(x) for x in origin],
@@ -121,6 +124,7 @@ def build_scene(models: list[ModelInfo], result=None, clash_run=None, progress=N
         "nverts": int(vbase),
         "ntris": int(tbase),
         "posBytes": int(pos.size * 4),
+        "colOffset": int(pos.size * 4 + idx.size * 4),     # màu IFC theo đỉnh (uint8 RGB)
     }
     return data, meta
 

@@ -81,6 +81,10 @@ async function init() {
     onPick: (p) => onPick(p),
     onSelect: (ids) => onSelectChange(ids),
     onBoxMode: (on) => $("#btnBox").classList.toggle("active", on),
+    infoPanel: false,            // thông tin đối tượng / xung đột hiển thị ở khung Thuộc tính bên trái
+    legend: false,               // chú giải màu hiển thị ở khung bên trái
+    onLegend: (items, mode) => renderLegend(items, mode),
+    onClashFocus: (c) => showClashCard(c),
   });
   bindUI();
   await refreshState();
@@ -117,7 +121,13 @@ function bindUI() {
   $("#dockToggle").onclick = () => $(".center").classList.toggle("dock-min");
   $("#btnCheck").onclick = runCheck;
   $("#btnClash").onclick = runClash;
-  $("#btnColor").onclick = () => { S.viewer.setColorMode("status"); toast("Đỏ = lỗi · Vàng = cảnh báo · Xanh = đạt"); };
+  $("#btnColor").onclick = () => {
+    const on = S.viewer.colorMode !== "status";
+    S.viewer._userColorMode = true;
+    S.viewer.setColorMode(on ? "status" : (S.viewer.ifcColors ? "ifc" : "file"));
+    $("#btnColor").classList.toggle("active", on);
+    toast(on ? "Tô màu kết quả: đỏ = lỗi · vàng = cảnh báo · xanh = đạt (bấm lại để về màu IFC)" : "Đã về màu gốc IFC");
+  };
   $("#btnIsoFail").onclick = isolateFailing;
   $("#btnShowAll").onclick = () => { S.viewer.unhideAll(); S.viewer.fitAll(); };
   $("#btnBox").onclick = () => { S.viewer.setBoxMode(!S.viewer.boxMode); $("#btnBox").classList.toggle("active", S.viewer.boxMode); };
@@ -131,6 +141,10 @@ function bindUI() {
   $("#aiq").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); askAI(); } });
   $("#btnSettings").onclick = openSettings;
   $("#btnProjOpen").onclick = openProjects;
+  $("#btnProjNew").onclick = newProject;
+  $("#startNew").onclick = newProject;
+  $("#projBtn").onclick = (e) => { e.stopPropagation(); toggleProjMenu(); };
+  document.addEventListener("click", (e) => { if (!e.target.closest(".projsel")) $("#projMenu").classList.remove("on"); });
   $("#btnProjSave").onclick = () => saveProject(false);
   $("#btnProjSaveAs").onclick = () => saveProject(true);
   $("#mclose").onclick = closeModal;
@@ -151,8 +165,14 @@ async function refreshState() {
   $("#credit").textContent = `Phát triển bởi ${st.app.author} · ĐT: ${st.app.phone} · v${st.app.version}`;
   const u = st.user;
   $("#userbox").innerHTML = u ? `${u.picture ? `<img src="${esc(u.picture)}" alt="" referrerpolicy="no-referrer">` : ""}<span title="${esc(u.email)}">${esc(u.name || u.email)}</span><a href="/auth/logout">Đăng xuất</a>` : "";
-  $("#docname").textContent = (st.project ? `📁 ${st.project.name} — ` : "") +
-    (st.models.length ? st.models.map((m) => m.file).join(" · ") : "Chưa mở mô hình");
+  $("#projName").textContent = st.project ? st.project.name : "Chưa chọn dự án";
+  $("#docname").textContent = (st.models.length ? `${st.models.length} file: ` + st.models.map((m) => m.file).join(" · ") : "") +
+    (st.project && st.last_saved ? `  ·  đã lưu tự động ${st.last_saved}` : "");
+  $("#addLbl").innerHTML = st.project ? "Thêm<br>file IFC" : "Mở<br>file IFC";
+  $("#startAddLbl").textContent = st.project ? "Thêm file IFC vào dự án" : "Mở nhanh file IFC (không lưu)";
+  $("#startProj").innerHTML = st.project && !st.models.length
+    ? `<p><b>📁 ${esc(st.project.name)}</b> chưa có file nào - bấm <b>Thêm file IFC vào dự án</b> hoặc kéo thả file vào đây.</p>` : "";
+  if (!st.models.length) renderRecent();
   $("#start").classList.toggle("hidden", st.models.length > 0);
   const r = st.result;
   $("#statusRight").textContent = `${st.models.length} file · ${fmt(st.models.reduce((a, m) => a + m.elements, 0))} đối tượng` +
@@ -173,6 +193,34 @@ async function loadScene() {
     loadDrawingOverlay();
     status(`Mô hình 3D: ${fmt(meta.objects.length)} đối tượng`);
   } catch (e) { toast("Không dựng được 3D: " + e.message, true); }
+}
+
+// ====================================================================== khung bên trái: chú giải, xung đột
+function renderLegend(items, mode) {
+  const label = { ifc: "theo IFC", status: "kết quả kiểm tra", file: "theo file", class: "theo lớp IFC" }[mode] || "";
+  $("#legendMode").textContent = label;
+  $("#legend").innerHTML = items.length ? items.map(([c, t]) => `<div class="lg" title="${esc(t)}"><i style="background:${c}"></i>${esc(t)}</div>`).join("")
+    : '<div class="muted small">—</div>';
+}
+function showClashCard(c) {
+  const o = S.viewer.meta ? S.viewer.meta.objects : [];
+  const nm = (i) => (i == null || !o[i] ? "?" : `${esc(S.viewer.meta.classes[o[i][3]])} · ${esc(o[i][4])}`);
+  const html = `<div class="clashcard"><b class="t">💥 Xung đột ${esc(c.id)}</b> <span class="muted small">${esc(c.t)}</span>
+    <div><b>${esc(c.m || ("Độ sâu xuyên " + c.d.toFixed(3) + " m"))}</b></div>
+    <div class="small">🟪 A: ${nm(c.a)}</div><div class="small">🟦 B: ${nm(c.b)}</div></div>`;
+  S.clashCard = html;
+  const ex = $("#props .clashcard");
+  if (ex) ex.outerHTML = html; else $("#props").insertAdjacentHTML("afterbegin", html);
+}
+async function waitIdle(maxMs = 600000) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < maxMs) {
+    const st = await api("/api/state");
+    if (!st.busy) return true;
+    $("#status").textContent = "Đang đợi tác vụ hiện tại hoàn tất...";
+    await new Promise((r) => setTimeout(r, 700));
+  }
+  return false;
 }
 
 // ====================================================================== chọn đối tượng
@@ -218,7 +266,8 @@ async function showProps(file, step) {
       h += `<div class="sect">${esc(p.name || "(Pset không tên)")}</div><table class="kv">` +
         p.props.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${v ? esc(v) : '<span class="empty">(trống)</span>'}</td></tr>`).join("") + "</table>";
     }
-    $("#props").innerHTML = h;
+    $("#props").innerHTML = (S.clashCard || "") + h;
+    S.clashCard = null;
     $$("#props .sect").forEach((s) => (s.onclick = () => s.classList.toggle("closed")));
     $$("#props [data-clash]").forEach((el) => (el.onclick = () => S.viewer.focusClash(el.dataset.clash)));
   } catch (e) { $("#props").innerHTML = `<div class="pad muted">${esc(e.message)}</div>`; }
@@ -371,7 +420,7 @@ async function runCheck() {
     if (S.tab === "rules" && S.rules) $("#rSave") && (await $("#rSave").onclick());
     await runJob(api("/api/check", { method: "POST" }));
     S.results = null; await refreshState(); await loadScene();
-    S.viewer.setColorMode("status"); showTab("results");
+    showTab("results");
     const r = S.state.result; toast(`Kiểm tra xong: đạt ${r.compliance.toFixed(1)}%, ${fmt(r.errors)} lỗi, ${fmt(r.warnings)} cảnh báo`);
   } catch (e) { toast(e.message, true); }
 }
@@ -523,8 +572,46 @@ async function tabLog(el) {
 }
 
 // ====================================================================== dự án
+async function newProject() {
+  const name = prompt("Tên dự án mới:", "");
+  if (!name || !name.trim()) return;
+  try {
+    await waitIdle();
+    await api("/api/projects/new", { method: "POST", json: { name: name.trim() } });
+    S.viewer.clear(); $("#props").innerHTML = '<div class="muted pad">Chọn 1 đối tượng trong mô hình 3D hoặc trong bảng để xem thông tin.</div>';
+    Object.assign(S, { results: null, clash: null, rules: null, tests: null, health: null, drawing: null, drawingRes: null, aiListCard: null, clashView: null });
+    S.viewer.setOverlay(null); S.viewer.setMarkers(null);
+    await refreshState(); renderTab();
+    toast(`Đã tạo dự án "${name.trim()}" - thêm file IFC để bắt đầu`);
+  } catch (e) { toast(e.message, true); }
+}
+async function toggleProjMenu() {
+  const m = $("#projMenu");
+  if (m.classList.contains("on")) { m.classList.remove("on"); return; }
+  const d = await api("/api/projects");
+  const cur = d.current ? d.current.id : null;
+  m.innerHTML = `<button class="pm" data-a="new"><b>＋ Tạo dự án mới</b></button><hr>` +
+    (d.projects.length ? d.projects.map((p) => `<button class="pm ${p.id === cur ? "cur" : ""}" data-id="${p.id}"><span>${p.id === cur ? "● " : ""}<b>${esc(p.name)}</b></span>
+      <small>${p.files.length} file · ${esc(p.updated)}${p.has_result ? " · đã kiểm tra" : ""}${p.has_clash ? " · có xung đột" : ""}</small></button>`).join("")
+      : '<div class="pad muted small">Chưa có dự án nào.</div>') +
+    `<hr><button class="pm" data-a="manage">🗂️ Quản lý dự án (tải về, nhập, xoá)...</button>`;
+  m.classList.add("on");
+  $$("[data-id]", m).forEach((b) => (b.onclick = () => { m.classList.remove("on"); if (b.dataset.id !== cur) loadProject(b.dataset.id); }));
+  m.querySelector('[data-a="new"]').onclick = () => { m.classList.remove("on"); newProject(); };
+  m.querySelector('[data-a="manage"]').onclick = () => { m.classList.remove("on"); openProjects(); };
+}
+async function renderRecent() {
+  try {
+    const d = await api("/api/projects");
+    const cur = d.current ? d.current.id : null;
+    const list = d.projects.filter((p) => p.id !== cur).slice(0, 6);
+    $("#startRecent").innerHTML = list.length ? `<div class="recent"><h3>Dự án gần đây</h3>` + list.map((p) => `<button data-id="${p.id}"><b>📁 ${esc(p.name)}</b>
+      <small>${p.files.length} file · ${esc(p.updated)}</small></button>`).join("") + "</div>" : "";
+    $$("#startRecent [data-id]").forEach((b) => (b.onclick = () => loadProject(b.dataset.id)));
+  } catch (e) { /* */ }
+}
 async function saveProject(asNew) {
-  if (!S.state.models.length) return toast("Chưa có mô hình để lưu", true);
+  if (!S.state.models.length && !S.state.project) return toast("Chưa có mô hình để lưu - hoặc bấm ＋ Dự án mới", true);
   let name = S.state.project ? S.state.project.name : "";
   if (asNew || !S.state.project) {
     name = prompt("Tên dự án:", name || (S.state.models[0].file.replace(/\.ifc$/i, "")));
@@ -557,9 +644,13 @@ async function openProjects() {
 }
 async function loadProject(pid) {
   try {
+    await waitIdle();
     await runJob(api(`/api/projects/${pid}/open`, { method: "POST" }));
     Object.assign(S, { results: null, clash: null, rules: null, tests: null, health: null, drawing: null, aiListCard: null, clashView: null });
-    await refreshState(); await loadScene(); await loadDrawingOverlay(); renderTab();
+    S.viewer.setOverlay(null); S.viewer.setMarkers(null);
+    await refreshState();
+    if (S.state.models.length) { await loadScene(); await loadDrawingOverlay(); } else S.viewer.clear();
+    renderTab();
     toast(`Đã mở dự án "${S.state.project.name}"`);
   } catch (e) { toast(e.message, true); }
 }
