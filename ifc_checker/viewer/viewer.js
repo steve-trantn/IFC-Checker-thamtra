@@ -37,6 +37,7 @@
       this.showClash = true;
       this.selected = [];
       this.activeClash = null;
+      this.isolateSet = null;
       this._buildDom();
       this._initThree();
     }
@@ -195,6 +196,18 @@
       this.xrMesh.renderOrder = 9;
       this.xrMesh.visible = false;
       this.scene.add(this.xrMesh);
+      // bảng tra (file, step) -> chỉ số đối tượng; cha -> các con (đối tượng cha không có hình học)
+      this.objIndex = new Map();
+      this.childIndex = new Map();
+      meta.objects.forEach((o, i) => {
+        this.objIndex.set(o[0] + ":" + o[1], i);
+        if (o[11] != null && o[11] >= 0) {
+          const k = o[0] + ":" + o[11];
+          if (!this.childIndex.has(k)) this.childIndex.set(k, []);
+          this.childIndex.get(k).push(i);
+        }
+      });
+      this.isolateSet = null;
       this._recolor();
       this._rebuildIndex();
       this._buildClashMarkers();
@@ -250,6 +263,7 @@
       let total = 0;
       const sel = new Set(this.selected);
       objs.forEach((o, i) => {
+        if (this.isolateSet && !this.isolateSet.has(i)) return;
         if (this.hideOk && o[5] <= 0 && !sel.has(i)) return;
         keep.push(i); total += o[9];
       });
@@ -325,7 +339,49 @@
       this._render();
     }
 
-    fitAll() { if (this.bounds) this._flyToBox(this.bounds); }
+    fitAll() { if (this.bounds) this._flyToBox(this.isolateSet ? this._boxOf([...this.isolateSet]) : this.bounds); }
+
+    // ------------------------------------------------------------------ API cho ứng dụng
+    /** refs: [[file, step], ...] -> chỉ số đối tượng 3D (đối tượng không có hình học thì lấy các con) */
+    resolve(refs) {
+      if (!this.meta) return [];
+      const fidx = new Map(this.meta.files.map((f, i) => [f, i]));
+      const out = new Set();
+      for (const [f, st] of refs || []) {
+        const fi = fidx.get(f);
+        if (fi == null) continue;
+        const k = fi + ":" + st;
+        if (this.objIndex.has(k)) out.add(this.objIndex.get(k));
+        else for (const c of this.childIndex.get(k) || []) out.add(c);
+      }
+      return [...out];
+    }
+
+    isolate(ids) {
+      this.isolateSet = ids && ids.length ? new Set(ids) : null;
+      this._rebuildIndex();
+      if (this.isolateSet) this._flyToBox(this._boxOf(ids));
+      else this.fitAll();
+    }
+
+    clearIsolate() { this.isolate(null); }
+
+    setColorMode(m) {
+      this.colorMode = m;
+      const sel = this.c.querySelector('[data-k="mode"]');
+      if (sel) sel.value = m;
+      this._recolor();
+      this._legend();
+    }
+
+    clearSelection() {
+      this.selected = [];
+      this.activeClash = null;
+      if (this.activeMarker) this.activeMarker.visible = false;
+      this._highlight([], []);
+      this._recolor();
+      this.info.style.display = "none";
+    }
 
     _boxOf(ids) {
       const b = new T.Box3();

@@ -1,0 +1,7 @@
+projects/
+**/__pycache__/
+**/*.ifc
+ifc_checker/viewer/_cache/
+.git/
+dist/
+build/

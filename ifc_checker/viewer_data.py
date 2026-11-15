@@ -90,8 +90,9 @@ def build_scene(models: list[ModelInfo], result=None, clash_run=None, progress=N
             f = (mesh.faces.astype(np.int64) + vbase).astype(np.uint32)
             bb = np.vstack([v.min(axis=0), v.max(axis=0)]).reshape(-1)
             oi = len(objects)
+            par = by_guid.get(rec.parent_guid) if rec else None
             objects.append([fi, int(sid), mesh.guid, class_idx[cls], name, st, vbase, len(v), tbase, len(f),
-                            [round(float(x), 3) for x in bb]])
+                            [round(float(x), 3) for x in bb], par.step_id if par is not None else -1])
             obj_index[key] = oi
             if src in msgs:
                 issues_out[str(oi)] = msgs[src]

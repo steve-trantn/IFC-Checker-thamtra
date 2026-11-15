@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Thẩm Tra Mô Hình BIM</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%231f3a5f'/%3E%3Cpath d='M8 22V10l8-4 8 4v12l-8 4z' fill='none' stroke='%23f0a03c' stroke-width='2.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/static/app.css">
+<style id="ttv-css"></style>
+<script src="/viewer/three.min.js"></script>
+<script src="/viewer/viewer.js"></script>
+</head>
+<body>
+<header class="titlebar">
+  <div class="logo">TT</div>
+  <div class="appname">Thẩm Tra Mô Hình BIM</div>
+  <div class="docname" id="docname">Chưa mở mô hình</div>
+  <div class="spacer"></div>
+  <div class="credit" id="credit"></div>
+</header>
+
+<nav class="ribbon">
+  <div class="rgroup"><div class="rbtns">
+    <label class="rbtn" title="Mở 1 hoặc nhiều file IFC"><input type="file" id="fileInput" accept=".ifc" multiple hidden><span class="ic">📂</span>Mở IFC</label>
+    <button class="rbtn" data-dock="health"><span class="ic">🩺</span>Sức khỏe<br>mô hình</button>
+  </div><div class="rlabel">Mô hình</div></div>
+  <div class="rgroup"><div class="rbtns">
+    <button class="rbtn" data-dock="rules"><span class="ic">📋</span>Quy tắc<br>BEP</button>
+    <button class="rbtn primary" id="btnCheck"><span class="ic">▶</span>Chạy<br>kiểm tra</button>
+    <button class="rbtn" data-dock="results"><span class="ic">✅</span>Kết quả</button>
+  </div><div class="rlabel">Kiểm tra thông tin</div></div>
+  <div class="rgroup"><div class="rbtns">
+    <button class="rbtn" data-dock="clash"><span class="ic">⚠️</span>Ma trận<br>va chạm</button>
+    <button class="rbtn primary" id="btnClash"><span class="ic">💥</span>Chạy<br>xung đột</button>
+  </div><div class="rlabel">Xung đột</div></div>
+  <div class="rgroup"><div class="rbtns">
+    <button class="rbtn" id="btnColor"><span class="ic">🎨</span>Tô màu<br>kết quả</button>
+    <button class="rbtn" id="btnIsoFail"><span class="ic">🔎</span>Cô lập<br>đối tượng lỗi</button>
+    <button class="rbtn" id="btnShowAll"><span class="ic">🏢</span>Hiện<br>tất cả</button>
+  </div><div class="rlabel">Xem 3D</div></div>
+  <div class="rgroup"><div class="rbtns">
+    <button class="rbtn" id="btnAI"><span class="ic">💬</span>Hỏi<br>mô hình</button>
+  </div><div class="rlabel">Trợ lý AI</div></div>
+  <div class="rgroup"><div class="rbtns">
+    <a class="rbtn" href="/api/report.xlsx"><span class="ic">📊</span>Báo cáo<br>Excel</a>
+    <a class="rbtn" href="/api/report.html" target="_blank"><span class="ic">🌐</span>Báo cáo<br>HTML</a>
+    <button class="rbtn" id="btnSettings"><span class="ic">⚙️</span>Cài đặt</button>
+  </div><div class="rlabel">Báo cáo</div></div>
+</nav>
+
+<main class="workspace" id="workspace">
+  <aside class="leftpane">
+    <section class="panel" id="propsPanel">
+      <div class="phead">Thuộc tính</div>
+      <div class="pbody" id="props"><div class="muted pad">Chọn 1 đối tượng trong mô hình 3D hoặc trong bảng để xem thông tin.</div></div>
+    </section>
+    <section class="panel" id="browserPanel">
+      <div class="phead">Trình duyệt dự án</div>
+      <div class="pbody" id="browser"></div>
+    </section>
+  </aside>
+
+  <section class="center">
+    <div class="viewerwrap">
+      <div id="viewer"></div>
+      <div class="start" id="start">
+        <div class="startbox">
+          <div class="bigicon">🏗️</div>
+          <h1>Mô hình của bạn.<br>Thẩm tra rõ ràng hơn.</h1>
+          <p>Mở file IFC (IFC2X3 / IFC4 / IFC4.3 hạ tầng) để kiểm tra thông tin theo BEP, phát hiện xung đột và hỏi đáp mô hình bằng tiếng Việt.</p>
+          <label class="btn primary"><input type="file" id="fileInput2" accept=".ifc" multiple hidden>📂 Mở file IFC</label>
+          <div class="muted small">hoặc kéo thả file .ifc vào đây · có thể mở nhiều file của nhiều bộ môn</div>
+        </div>
+      </div>
+      <div class="dropmask" id="dropmask">Thả file IFC để mở</div>
+    </div>
+    <div class="splitter" id="splitter" title="Kéo để đổi kích thước"></div>
+    <section class="dock" id="dock">
+      <div class="docktabs" id="docktabs">
+        <button data-tab="health">Sức khỏe mô hình</button>
+        <button data-tab="rules">Quy tắc BEP</button>
+        <button data-tab="results">Kết quả</button>
+        <button data-tab="clash">Xung đột</button>
+        <button data-tab="inventory">Thống kê thuộc tính</button>
+        <button data-tab="ailist">Danh sách AI</button>
+        <button data-tab="log">Nhật ký</button>
+        <div class="spacer"></div>
+        <button class="iconbtn" id="dockToggle" title="Thu gọn / mở rộng">▾</button>
+      </div>
+      <div class="dockbody" id="dockbody"></div>
+    </section>
+  </section>
+
+  <aside class="aipane" id="aipane">
+    <div class="phead">💬 Hỏi mô hình <span class="spacer"></span><button class="iconbtn" id="aiClose" title="Đóng">✕</button></div>
+    <div class="aiinfo" id="aiinfo"></div>
+    <div class="aimsgs" id="aimsgs"></div>
+    <div class="aisugg" id="aisugg"></div>
+    <div class="aiinput">
+      <textarea id="aiq" rows="2" placeholder="Hỏi về mô hình, vd: Có bao nhiêu hố ga thoát nước mưa?"></textarea>
+      <button class="btn primary" id="aiSend">Gửi</button>
+    </div>
+  </aside>
+</main>
+
+<footer class="statusbar">
+  <span id="status">Sẵn sàng</span>
+  <div class="progress" id="progress"><div id="progressbar"></div></div>
+  <span class="spacer"></span>
+  <span id="statusRight"></span>
+</footer>
+
+<div class="modal" id="modal"><div class="modalbox"><div class="mhead"><span id="mtitle"></span><button class="iconbtn" id="mclose">✕</button></div><div class="mbody" id="mbody"></div><div class="mfoot" id="mfoot"></div></div></div>
+<div class="toast" id="toast"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>

@@ -1,96 +1,77 @@
-# Thẩm Tra Mô Hình BIM — kiểm tra thông tin phi hình học IFC theo BEP
+# Thẩm Tra Mô Hình BIM
 
-Phần mềm (desktop Windows **và** web) kiểm tra tự động hàng loạt file IFC xem đối tượng có **đủ thông tin phi hình học**, **đúng yêu cầu BEP/EIR (LOIN)** và **đúng chủng loại IFC** hay không. Có thể dùng AI (Claude) để hỗ trợ nếu người dùng có API key; không có AI phần mềm vẫn chạy đầy đủ.
+Ứng dụng web thẩm tra hồ sơ mô hình BIM định dạng IFC: kiểm tra **thông tin phi hình học theo BEP/LOIN**, **chủng loại IFC**, **xung đột theo ma trận va chạm**, xem **mô hình 3D** và **hỏi đáp mô hình bằng tiếng Việt** với trợ lý AI (tuỳ chọn).
 
 **Người phát triển:** Steve Tran — ĐT: 0987 779 228
 
-## Cài đặt & chạy
+## Chạy thử
 
 ```bat
 pip install -r requirements.txt
-run.bat                      :: bản desktop  (hoặc: python main.py)
-run_web.bat                  :: bản web, mở trong trình duyệt (hoặc: streamlit run web_app.py)
+run_web.bat            :: mở http://localhost:8000
 ```
 
-Đóng gói thành `.exe` để chạy trên máy không cài Python: chạy `build_exe.bat` → `dist\ThamTraBIM\ThamTraBIM.exe`.
+Đồng nghiệp cùng mạng LAN truy cập `http://<IP-máy-chạy>:8000`. Mọi xử lý diễn ra trên máy chủ này, file IFC không ra ngoài.
 
-## Đưa bản web lên mạng
+## Giao diện
 
-- **Máy chủ nội bộ công ty (khuyến nghị cho hồ sơ dự án):** trên 1 máy chạy `streamlit run web_app.py --server.address 0.0.0.0 --server.port 8501`, đồng nghiệp truy cập `http://<IP-máy>:8501`. File IFC không ra khỏi mạng công ty.
-- **Streamlit Community Cloud (miễn phí):** đẩy mã nguồn lên GitHub → vào share.streamlit.io → *New app* → chọn repo, file `web_app.py`. Lưu ý: file IFC tải lên sẽ được xử lý trên máy chủ cloud — cân nhắc quy định bảo mật dự án. API key AI đặt trong *Secrets* với tên `ANTHROPIC_API_KEY`.
-
-## Quy trình
-
-1. **Hồ sơ IFC** – thêm file/thư mục (IFC2X3, IFC4, IFC4X3; nhiều bộ môn cùng lúc).
-2. **Quy tắc BEP** – mở bộ quy tắc Excel (`templates/BEP_Rules_Mau.xlsx`), sửa trong Excel rồi bấm *Tải lại*; hoặc **Nhập Phụ lục LOI từ BEP** (.docx/.xlsx có bảng *Nhóm | Thông tin | Kiểu*) — phần mềm tự đọc bảng, tự gán hạng mục với file IFC theo tên file, không cần AI; hoặc dùng AI đọc BEP dạng khác; có thể chạy kèm file **IDS** (chuẩn buildingSMART).
-3. **Chạy kiểm tra** → tab *Kết quả*: tỷ lệ đạt theo file / theo quy tắc / chi tiết từng đối tượng. Nhấp đúp để xem toàn bộ thuộc tính; chuột phải để copy GlobalId (dán vào Navisworks/Revit/BIMcollab để tìm).
-4. **Xung đột & 3D** – kiểm tra va chạm giữa các mô hình, xem mô hình 3D bên cạnh bảng lỗi/xung đột (xem mục dưới).
-5. **Thống kê** – số đối tượng theo lớp IFC; mức độ điền của từng thuộc tính (đối chiếu nhanh với BEP).
-6. **Xuất báo cáo** Excel (biểu đồ, xung đột) kèm HTML; xung đột xuất thêm **BCF 2.1**.
-
-## Xem mô hình 3D & kiểm tra xung đột
-
-- **Xem 3D**: bản web hiển thị khung 3D ngay **bên cạnh** bảng lỗi / bảng xung đột; bản desktop mở cửa sổ 3D trong trình duyệt và **liên kết 2 chiều** với phần mềm (chọn dòng → camera phóng tới đối tượng; nháy chọn trong 3D → chọn dòng lỗi). Tô màu theo kết quả kiểm tra (đỏ lỗi / vàng cảnh báo / xanh đạt), theo file hoặc theo lớp IFC; đối tượng bị che khuất (vd hố ga dưới mặt đường) hiện dạng x-quang. Thư viện three.js đóng gói sẵn — chạy được trong mạng nội bộ không có Internet.
-- **Xung đột**: mỗi phép thử so nhóm A với nhóm B (lọc theo **tên file** + **lớp IFC**), mặc định tạo theo từng cặp file. Va chạm tính trên lưới tam giác bằng thư viện FCL, báo **độ sâu xuyên** để lọc theo dung sai. Nên tắt các cặp tiếp xúc theo thiết kế (vd hố ga × mặt đường) theo ma trận va chạm trong BEP. Với bề mặt hở (địa hình, mặt đường) độ sâu chỉ mang tính tham khảo.
-- Phần mềm tự xử lý lỗi xuất IFC hay gặp: `IfcStyledItem` bị đặt nhầm vào danh sách hình học (làm nhiều phần mềm không hiển thị được đối tượng) — vẫn dựng hình được và báo lỗi này trong trạng thái file.
-
-## Bộ quy tắc (sheet `Rules`)
-
-| Cột | Ý nghĩa |
+| Khu vực | Nội dung |
 |---|---|
-| Lớp IFC áp dụng | `IfcWall;IfcSlab` (gồm lớp con), `*` = mọi đối tượng, `!IfcX` để loại trừ |
-| Lọc theo tên file | Regex trên tên file IFC, vd `THOATNUOC` hoặc `CONGNGANG` — áp quy tắc theo hạng mục khi tên file theo quy tắc đặt tên của BEP |
-| Đối tượng KT | `PROPERTY`, `ATTRIBUTE`, `CLASS`, `CONTAINER`, `MATERIAL`, `CLASSIFICATION` |
-| Property Set / Tên thuộc tính | So khớp **không phân biệt hoa/thường, dấu tiếng Việt, khoảng trắng thừa**; `*` = mọi Pset; hỗ trợ `Pset_*Common` |
-| Điều kiện | `EXISTS`, `EQUALS`, `NOT_EQUALS`, `IN`, `NOT_IN`, `REGEX`, `RANGE` (`0..100`), `NUMBER` |
-| Mức độ | `ERROR` (bắt buộc – tính vào tỷ lệ đạt), `WARNING`, `INFO` |
+| Thanh công cụ | Mở IFC · Sức khỏe mô hình · Quy tắc BEP · ▶ Chạy kiểm tra · Ma trận va chạm · Chạy xung đột · Tô màu kết quả · Cô lập đối tượng lỗi · Hỏi mô hình · Báo cáo Excel/HTML |
+| Giữa | Mô hình 3D (tô màu đỏ lỗi / vàng cảnh báo / xanh đạt, x-quang đối tượng bị che, điểm xung đột) |
+| Trái | **Thuộc tính** đối tượng đang chọn (thuộc tính gốc, Pset, lỗi, xung đột) · **Trình duyệt dự án** (file → lớp IFC: tô sáng / cô lập) |
+| Dưới | Sức khỏe mô hình · Quy tắc BEP (sửa trực tiếp) · Kết quả · Xung đột · Thống kê thuộc tính · Danh sách AI · Nhật ký |
+| Phải | **Hỏi mô hình**: trợ lý AI dùng công cụ của phần mềm để truy vấn, đếm trực tiếp trên mô hình rồi trả lời; mỗi kết quả có nút *Danh sách / Highlight 3D / Cô lập* |
 
-Sheet `ClassMapping`: từ khoá trong tên (không dấu, regex) → lớp IFC đúng. Dùng để phát hiện xuất sai chủng loại (vd tên có “hố ga” nhưng là `IfcBuildingElementProxy`).
+Bấm 1 dòng lỗi hoặc xung đột → mô hình bay tới đối tượng; nháy chọn trong 3D → hiện thuộc tính.
 
-Số giá trị kiểu `136.35m3` được đọc thành số; giá trị `' '`, `-`, `N/A`... coi là trống (sửa trong Cài đặt).
+## Kiểm tra thông tin theo BEP
+
+- Bộ quy tắc: Excel (`templates/BEP_Rules_Mau.xlsx`), JSON, hoặc file **IDS** (buildingSMART).
+- **Nhập Phụ lục LOI từ BEP** (.docx/.xlsx có bảng *Nhóm | Thông tin | Kiểu*): tự tạo quy tắc, tự gán hạng mục với file theo quy tắc đặt tên file — không cần AI.
+- So khớp tên Pset/thuộc tính không phân biệt hoa/thường, dấu tiếng Việt, khoảng trắng thừa; tự nhận biết cụm cha–con (nhóm thuần vs khối hình học tách nhỏ).
+- Phát hiện lỗi xuất IFC hay gặp (`IfcStyledItem` lẫn trong hình học, tên mất ký tự tiếng Việt, đối tượng phẳng tại cao độ 0).
+
+## Ma trận va chạm
+
+4 loại kiểm tra — định nghĩa "thế nào là va chạm" cho từng cặp nhóm:
+
+| Loại | Va chạm khi | Ví dụ trong ma trận mẫu |
+|---|---|---|
+| Cao độ khớp mặt (FLUSH) | Đỉnh A lệch bề mặt B quá ± giá trị | Mặt hố ga × mặt đường / vỉa hè: ±20 mm (hố ga nằm trong kết cấu đường là đúng thiết kế) |
+| Chiều sâu chôn (COVER) | Từ bề mặt B xuống đỉnh A nhỏ hơn giá trị | Ống thoát nước dưới lòng đường ≥ 0,7 m, dưới vỉa hè ≥ 0,5 m |
+| Khoảng cách tối thiểu (CLEARANCE) | Gần hơn giá trị (kể cả giao nhau) | Ống TNM × ống TNT 0,2 m; cây × ống 1,0 m; cột đèn × ống 0,5 m |
+| Va chạm cứng (HARD) | Hai khối giao nhau | Ống TNM xuyên hố ga TNT; biển báo trong phần xe chạy |
+
+Ma trận mẫu `templates/Ma_tran_va_cham_mau.xlsx` (24 phép thử, nhóm A1…D2 theo BEP hạ tầng). Nhóm nhận diện theo từ khoá tên (kể cả tên bị mất dấu khi xuất IFC), lớp IFC, tên file. **Các giá trị là giá trị mẫu** — đối chiếu QCVN 07:2023/BXD, TCVN 7957 và hồ sơ thiết kế. Kết quả xuất Excel và **BCF 2.1** (Navisworks, BIMcollab, Solibri).
 
 ## Trợ lý AI (tuỳ chọn)
 
-Nhập API key Claude trong **Cài đặt** (hoặc biến môi trường `ANTHROPIC_API_KEY`). Model mặc định `claude-opus-5-5`; có thể chọn `claude-sonnet-5-5` / `claude-haiku-5-5` cho rẻ hơn.
+Nhập API key Claude trong *Cài đặt* (chỉ giữ trong bộ nhớ phiên) hoặc đặt biến môi trường `ANTHROPIC_API_KEY` trên máy chủ. AI chỉ nhận kết quả truy vấn tóm tắt (tên lớp, tên, thuộc tính, thống kê), không nhận file IFC. Kết luận thẩm tra do chuyên gia quyết định.
 
-- **Đề xuất lớp IFC đúng** cho các nhóm đối tượng Proxy / nghi sai chủng loại (gộp theo tên loại để tiết kiệm).
-- **Tạo quy tắc từ file BEP** (PDF/DOCX/XLSX/TXT) → rà soát → lưu Excel.
-- **Viết nhận xét thẩm tra** (đưa vào báo cáo) và **hỏi đáp** về kết quả.
+## Deploy
 
-Chỉ gửi dữ liệu tóm tắt (tên lớp, tên loại, tên/giá trị mẫu thuộc tính, thống kê) — **không gửi file IFC/hình học**. Lần đầu dùng phần mềm sẽ hỏi xác nhận.
+- **Máy chủ công ty (khuyến nghị cho hồ sơ dự án):** chạy `run_web.bat` trên 1 máy Windows, hoặc Docker: `docker build -t thamtra . && docker run -p 8000:7860 thamtra`.
+- **Hugging Face Spaces (miễn phí, 16 GB RAM):** tạo Space loại *Docker*, đẩy mã nguồn này lên (Dockerfile có sẵn, cổng 7860). Thêm `ANTHROPIC_API_KEY` trong *Settings → Secrets* nếu dùng AI.
+- **Render / Railway / VPS:** dùng Dockerfile. Lưu ý gói miễn phí thường chỉ 512 MB RAM — không đủ cho mô hình lớn.
 
-## Dòng lệnh (chạy hàng loạt / tự động)
-
-```bat
-python main.py check "D:\HoSo\*.ifc" --rules BEP_Rules.xlsx --ids yeucau.ids --out BaoCao.xlsx --html BaoCao.html
-python main.py check D:\HoSo --fail-under 90      :: trả mã lỗi 1 nếu tỷ lệ đạt < 90%
-python main.py template BEP_Rules.xlsx
-```
+Khi đưa lên Internet: file IFC tải lên được xử lý trên máy chủ đó — cân nhắc quy định bảo mật dự án.
 
 ## Cấu trúc mã
 
 ```
-main.py                    điểm khởi chạy (GUI / CLI)
-ifc_checker/model_loader   đọc IFC, trích thuộc tính, vật liệu, phân loại, không gian chứa, assembly
-ifc_checker/rules          bộ quy tắc, đọc/ghi Excel-JSON, bộ mẫu mặc định
-ifc_checker/engine         áp quy tắc, kiểm tra tên ↔ lớp IFC, thống kê
-ifc_checker/ids_runner     chạy IDS bằng ifctester
-ifc_checker/bep_import     nhập Phụ lục LOI từ BEP (.docx/.xlsx) thành quy tắc
-ifc_checker/report         xuất Excel / HTML / JSON
-ifc_checker/geometry       dựng lưới tam giác (ifcopenshell.geom), dùng chung cho 3D và xung đột
-ifc_checker/clash          kiểm tra xung đột (FCL)
-ifc_checker/bcf            xuất BCF 2.1
-ifc_checker/viewer/        trình xem 3D (three.js) + trang cho web / desktop
-ifc_checker/viewer_data    đóng gói hình học + trạng thái cho trình xem
-ifc_checker/viewer_server  máy chủ cục bộ cho trình xem của bản desktop
-ifc_checker/web_viewer     nhúng trình xem vào Streamlit
-ifc_checker/ai             tích hợp Claude (tuỳ chọn)
-ifc_checker/gui            giao diện desktop (tkinter)
-web_app.py                 giao diện web (Streamlit)
+webapp/server.py           máy chủ web (FastAPI) - API cho giao diện
+webapp/assistant.py        trợ lý AI "Hỏi mô hình" (công cụ truy vấn mô hình)
+webapp/static/             giao diện (HTML/CSS/JS, không cần build)
+ifc_checker/model_loader   đọc IFC, thuộc tính, vật liệu, phân loại, không gian, cụm cha-con
+ifc_checker/rules          bộ quy tắc BEP (Excel/JSON) · bep_import: nhập Phụ lục LOI
+ifc_checker/engine         áp quy tắc, kiểm tra tên ↔ lớp IFC, thống kê · ids_runner: IDS
+ifc_checker/clash          ma trận va chạm 4 loại (FCL + chiếu đứng) · bcf: xuất BCF
+ifc_checker/geometry       dựng lưới tam giác · viewer_data: đóng gói cảnh 3D
+ifc_checker/viewer/        trình xem 3D (three.js đóng gói sẵn, chạy offline)
+ifc_checker/report         báo cáo Excel / HTML
+main.py, ifc_checker/gui   bản desktop (tạm dừng phát triển)
+web_app.py                 bản web Streamlit cũ (thay bằng webapp/)
 ```
 
-## Lưu ý
-
-- “Đối tượng đạt” = không vi phạm quy tắc mức ERROR.
-- Cụm đối tượng (cha - con), chế độ *Tự động*: cha chỉ là nhóm (không có thuộc tính) thì kiểm tra từng con; cha mang thông tin thì con là khối hình học tách nhỏ và được bỏ qua. Đổi trong Cài đặt.
-- Kết quả AI chỉ mang tính hỗ trợ; kết luận thẩm tra do chuyên gia quyết định.
+Dòng lệnh: `python main.py check "D:\HoSo\*.ifc" --rules BEP_Rules.xlsx --out BaoCao.xlsx`
