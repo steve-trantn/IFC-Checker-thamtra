@@ -33,11 +33,13 @@
       this.meta = null;
       this.colorMode = "status";
       this.hideOk = false;
-      this.isolate = true;
+      this.fadeOthers = true;   // làm mờ phần còn lại khi có đối tượng được chọn
       this.showClash = true;
       this.selected = [];
       this.activeClash = null;
       this.isolateSet = null;
+      this.hiddenSet = new Set();
+      this.boxMode = false;
       // LOD động theo kích thước trên màn hình (điểm ảnh)
       this.lod = true;
       this.lodHidePx = 1.5;     // nhỏ hơn -> ẩn
@@ -66,7 +68,7 @@
       c.appendChild(bar);
       bar.querySelector('[data-k="mode"]').onchange = (e) => { this._userColorMode = true; this.colorMode = e.target.value; this._recolor(); this._legend(); };
       bar.querySelector('[data-k="hideOk"]').onchange = (e) => { this.hideOk = e.target.checked; this._rebuildIndex(); };
-      bar.querySelector('[data-k="isolate"]').onchange = (e) => { this.isolate = e.target.checked; this._applyIsolate(); };
+      bar.querySelector('[data-k="isolate"]').onchange = (e) => { this.fadeOthers = e.target.checked; this._applyIsolate(); };
       bar.querySelector('[data-k="clash"]').onchange = (e) => { this.showClash = e.target.checked; if (this.clashMesh) this.clashMesh.visible = this.showClash; this._render(); };
       bar.querySelector('[data-k="fit"]').onclick = () => this.fitAll();
       bar.querySelector('[data-k="lod"]').onchange = (e) => { this.lod = e.target.checked; this._rebuildIndex(); };
@@ -77,7 +79,7 @@
       c.appendChild(this.legendEl);
       this.status = el("div", { class: "ttv-status" }, "Đang tải mô hình...");
       c.appendChild(this.status);
-      this.help = el("div", { class: "ttv-help" }, "Chuột trái: xoay · Chuột phải/Shift: di chuyển · Lăn: thu phóng · Nháy: chọn · Nháy đúp: đặt tâm xoay");
+      this.help = el("div", { class: "ttv-help" }, "Trái: xoay · Phải/Shift: di chuyển · Lăn: thu phóng · Nháy: chọn (Ctrl: chọn thêm) · Alt+kéo: chọn vùng · Chuột phải: menu · H ẩn · I cô lập · U hiện tất cả");
       c.appendChild(this.help);
     }
 
@@ -105,7 +107,14 @@
       window.addEventListener("keydown", (e) => {
         const t = e.target;
         if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
-        if (e.key === "f" || e.key === "F" || e.key === "Home") { this.fitAll(); }
+        if (!this.meta || e.ctrlKey || e.metaKey || e.altKey) return;
+        const k = e.key.toLowerCase();
+        if (k === "f" || e.key === "Home") this.fitAll();
+        else if (k === "h") this.hideSelected();
+        else if (k === "i") this.isolateSelected();
+        else if (k === "u") this.unhideAll();
+        else if (k === "z") this.zoomSelection();
+        else if (e.key === "Escape") this.clearSelection(true);
       });
       if (window.ResizeObserver) new ResizeObserver(() => this.resize()).observe(this.canvasWrap);
     }
@@ -144,14 +153,23 @@
       const dom = this.renderer.domElement;
       let mode = null, sx = 0, sy = 0, moved = false;
       dom.addEventListener("contextmenu", (e) => e.preventDefault());
+      let bx = 0, by = 0, btn = 0;
       dom.addEventListener("pointerdown", (e) => {
         this._autoFit = false;
-        mode = e.button === 2 || e.button === 1 || e.shiftKey ? "pan" : "rot";
-        sx = e.clientX; sy = e.clientY; moved = false;
+        this._hideMenu();
+        btn = e.button;
+        if (e.button === 0 && (this.boxMode || e.altKey)) mode = "box";
+        else mode = e.button === 2 || e.button === 1 || e.shiftKey ? "pan" : "rot";
+        sx = bx = e.clientX; sy = by = e.clientY; moved = false;
         dom.setPointerCapture(e.pointerId);
       });
       dom.addEventListener("pointermove", (e) => {
         if (!mode) return;
+        if (mode === "box") {
+          if (Math.abs(e.clientX - bx) + Math.abs(e.clientY - by) > 3) moved = true;
+          this._drawBox(bx, by, e.clientX, e.clientY);
+          return;
+        }
         const dx = e.clientX - sx, dy = e.clientY - sy;
         if (Math.abs(dx) + Math.abs(dy) > 2) moved = true;
         sx = e.clientX; sy = e.clientY;
@@ -176,7 +194,12 @@
         this._render();
       });
       dom.addEventListener("pointerup", (e) => {
-        if (mode && !moved && e.button === 0) this._pick(e, false);
+        if (mode === "box") {
+          this._boxEl.style.display = "none";
+          if (moved) this._boxSelect(bx, by, e.clientX, e.clientY, e.ctrlKey || e.metaKey);
+          else this._pick(e, false);
+        } else if (mode && !moved && btn === 0) this._pick(e, false);
+        else if (mode && !moved && btn === 2) this._contextMenu(e);
         mode = null;
       });
       dom.addEventListener("dblclick", (e) => this._pick(e, true));
@@ -232,6 +255,7 @@
         }
       });
       this.isolateSet = null;
+      this.hiddenSet = new Set();
       // tâm & bán kính bao của từng đối tượng (cho LOD và loại bỏ ngoài khung nhìn)
       const n0 = meta.objects.length;
       this.centers = new Float32Array(n0 * 3);
@@ -320,7 +344,10 @@
       const L = this.lodStats;
       this.status.textContent = this.baseStatus + (this.lod && L
         ? ` · đang vẽ ${L.tris.toLocaleString()} tam giác (${L.full.toLocaleString()} chi tiết, ${L.proxy.toLocaleString()} giản lược, ${(L.hidden + L.culled).toLocaleString()} ẩn)`
-        : "");
+        : "") +
+        (this.selected && this.selected.length ? ` · chọn ${this.selected.length.toLocaleString()}` : "") +
+        (this.hiddenSet && this.hiddenSet.size ? ` · ẩn ${this.hiddenSet.size.toLocaleString()}` : "") +
+        (this.isolateSet ? ` · cô lập ${this.isolateSet.size.toLocaleString()}` : "");
     }
 
     _rebuildIndex() {
@@ -338,6 +365,7 @@
       const useLod = this.lod && C;
       objs.forEach((o, i) => {
         if (this.isolateSet && !this.isolateSet.has(i)) return;
+        if (this.hiddenSet.has(i)) return;
         if (this.hideOk && o[5] <= 0 && !sel.has(i)) return;
         if (useLod && !sel.has(i)) {
           const dx = C[i * 3] - cp.x, dy = C[i * 3 + 1] - cp.y, dz = C[i * 3 + 2] - cp.z;
@@ -528,13 +556,15 @@
       this._legend();
     }
 
-    clearSelection() {
+    clearSelection(notify) {
       this.selected = [];
+      if (notify && this.opts.onSelect) setTimeout(() => this.opts.onSelect([]), 0);
       this.activeClash = null;
       if (this.activeMarker) this.activeMarker.visible = false;
       this._highlight([], []);
       this._recolor();
       this.info.style.display = "none";
+      this._updateStatus();
     }
 
     _boxOf(ids) {
@@ -561,6 +591,7 @@
         this._flyToBox(this._boxOf(ids));
         this._showInfo(ids[0], ids.length);
       } else this.info.style.display = "none";
+      this._updateStatus();
       if (!(opts && opts.silent) && this.opts.onSelect) this.opts.onSelect(ids);
     }
 
@@ -621,7 +652,7 @@
     }
 
     _applyIsolate() {
-      const on = this.isolate && this.selected.length > 0;
+      const on = this.fadeOthers && this.selected.length > 0;
       this.mat.transparent = on;
       this.mat.opacity = on ? 0.18 : 1;
       if (this.proxyMat) { this.proxyMat.transparent = on; this.proxyMat.opacity = on ? 0.18 : 1; this.proxyMat.depthWrite = !on; this.proxyMat.needsUpdate = true; }
@@ -652,7 +683,7 @@
       rc.setFromCamera(ndc, this.camera);
       const targets = this.proxyMesh && this.proxyMesh.count ? [this.mesh, this.proxyMesh] : [this.mesh];
       const hits = rc.intersectObjects(targets, false);
-      if (!hits.length) { if (!setPivot) this.focus([], { silent: true }); return; }
+      if (!hits.length) { if (!setPivot && !(e.ctrlKey || e.metaKey)) this.clearSelection(true); return; }
       const h = hits[0];
       if (setPivot) {
         const off = this.camera.position.clone().sub(this.target);
@@ -662,14 +693,114 @@
         return;
       }
       const oi = h.object === this.proxyMesh ? this.proxyIds[h.instanceId] : this.triObj[h.faceIndex];
-      this.selected = [oi];
+      if (e.ctrlKey || e.metaKey) {
+        const set = new Set(this.selected);
+        if (set.has(oi)) set.delete(oi); else set.add(oi);
+        this.select([...set]);
+      } else this.select([oi]);
+    }
+
+    // ------------------------------------------------------------------ chọn / ẩn / cô lập
+    /** Đặt tập đối tượng đang chọn (không di chuyển camera trừ khi opts.zoom). */
+    select(ids, opts = {}) {
+      ids = [...new Set(ids || [])].filter((i) => i >= 0 && i < this.meta.objects.length);
+      this.selected = ids;
       this.activeClash = null;
       if (this.activeMarker) this.activeMarker.visible = false;
-      this._highlight([], [oi]);
+      this._highlight([], ids.length <= 20000 ? ids : ids.slice(0, 20000));
       this._recolor();
-      this._showInfo(oi, 1);
-      const o = this.meta.objects[oi];
-      if (this.opts.onPick) this.opts.onPick({ index: oi, file: this.meta.files[o[0]], step: o[1], guid: o[2] });
+      if (ids.length === 1) this._showInfo(ids[0], 1);
+      else if (ids.length > 1) {
+        const by = {};
+        for (const i of ids) { const c = this.meta.classes[this.meta.objects[i][3]]; by[c] = (by[c] || 0) + 1; }
+        this.info.innerHTML = `<b>${ids.length.toLocaleString()} đối tượng đã chọn</b> <span class="ttv-x">✕</span><ul style="color:inherit">` +
+          Object.entries(by).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([c, n]) => `<li style="color:inherit">${esc(c)}: ${n.toLocaleString()}</li>`).join("") +
+          `</ul><div class="ttv-k">H ẩn · I cô lập · Z phóng tới · Esc bỏ chọn · chuột phải: thêm lệnh</div>`;
+        this.info.style.display = "block";
+        this.info.querySelector(".ttv-x").onclick = () => (this.info.style.display = "none");
+      } else this.info.style.display = "none";
+      if (opts.zoom && ids.length) this._flyToBox(this._boxOf(ids), this._samplePoints(ids, 20000));
+      this._updateStatus();
+      if (ids.length === 1 && this.opts.onPick) {
+        const o = this.meta.objects[ids[0]];
+        this.opts.onPick({ index: ids[0], file: this.meta.files[o[0]], step: o[1], guid: o[2] });
+      }
+      if (this.opts.onSelect && !opts.silent) this.opts.onSelect(ids);
+    }
+
+    getSelection() { return [...this.selected]; }
+    refsOf(ids) { return ids.map((i) => { const o = this.meta.objects[i]; return [this.meta.files[o[0]], o[1]]; }); }
+
+    hide(ids) { for (const i of ids) this.hiddenSet.add(i); this._rebuildIndex(); this._updateStatus(); }
+    hideSelected() { if (!this.selected.length) return; const ids = this.selected; this.clearSelection(true); this.hide(ids); }
+    hideOthers() {
+      if (!this.selected.length) return;
+      const keep = new Set(this.selected);
+      this.meta.objects.forEach((o, i) => { if (!keep.has(i)) this.hiddenSet.add(i); });
+      this._rebuildIndex(); this._updateStatus();
+    }
+    isolateSelected() { if (this.selected.length) this.isolate(this.selected); this._updateStatus(); }
+    unhideAll() { this.hiddenSet.clear(); this.isolateSet = null; this._rebuildIndex(); this._updateStatus(); }
+    zoomSelection() { if (this.selected.length) this._flyToBox(this._boxOf(this.selected), this._samplePoints(this.selected, 20000)); else this.fitAll(); }
+    selectSame(kind) {
+      if (!this.selected.length) return;
+      const objs = this.meta.objects, col = kind === "class" ? 3 : 0;
+      const vals = new Set(this.selected.map((i) => objs[i][col]));
+      const ids = [];
+      objs.forEach((o, i) => { if (vals.has(o[col]) && !this.hiddenSet.has(i) && (!this.isolateSet || this.isolateSet.has(i))) ids.push(i); });
+      this.select(ids);
+    }
+    setBoxMode(on) { this.boxMode = !!on; this.renderer.domElement.style.cursor = this.boxMode ? "crosshair" : ""; }
+
+    _drawBox(x0, y0, x1, y1) {
+      if (!this._boxEl) {
+        this._boxEl = el("div", { class: "ttv-box" });
+        this.c.appendChild(this._boxEl);
+      }
+      const r = this.c.getBoundingClientRect();
+      Object.assign(this._boxEl.style, { display: "block", left: Math.min(x0, x1) - r.left + "px", top: Math.min(y0, y1) - r.top + "px",
+        width: Math.abs(x1 - x0) + "px", height: Math.abs(y1 - y0) + "px" });
+    }
+
+    _boxSelect(x0, y0, x1, y1, add) {
+      const rect = this.renderer.domElement.getBoundingClientRect();
+      const toN = (x, y) => [((x - rect.left) / rect.width) * 2 - 1, -((y - rect.top) / rect.height) * 2 + 1];
+      const [ax, ay] = toN(Math.min(x0, x1), Math.max(y0, y1)), [bx, by] = toN(Math.max(x0, x1), Math.min(y0, y1));
+      this.camera.updateMatrixWorld();
+      const v = new T.Vector3(), C = this.centers, ids = add ? new Set(this.selected) : new Set();
+      this.meta.objects.forEach((o, i) => {
+        if (this.hiddenSet.has(i) || (this.isolateSet && !this.isolateSet.has(i))) return;
+        v.set(C[i * 3], C[i * 3 + 1], C[i * 3 + 2]).project(this.camera);
+        if (v.z < 1 && v.x >= ax && v.x <= bx && v.y >= ay && v.y <= by) ids.add(i);
+      });
+      this.select([...ids]);
+    }
+
+    _hideMenu() { if (this._menu) this._menu.style.display = "none"; }
+
+    _contextMenu(e) {
+      // chuột phải lên đối tượng chưa chọn -> chọn đối tượng đó trước
+      const before = this.selected.length;
+      if (!before) this._pick({ clientX: e.clientX, clientY: e.clientY, ctrlKey: false }, false);
+      if (!this._menu) { this._menu = el("div", { class: "ttv-menu" }); this.c.appendChild(this._menu); }
+      const has = this.selected.length > 0, anyHidden = this.hiddenSet.size > 0 || !!this.isolateSet;
+      const items = [
+        ["zoom", "Phóng tới đối tượng chọn", "Z", has], ["hide", "Ẩn đối tượng chọn", "H", has],
+        ["iso", "Cô lập đối tượng chọn", "I", has], ["others", "Ẩn các đối tượng khác", "", has], null,
+        ["sameClass", "Chọn cùng lớp IFC", "", has], ["sameFile", "Chọn cùng file", "", has],
+        ["box", this.boxMode ? "Tắt chọn vùng" : "Chọn vùng (kéo khung)", "Alt+kéo", true], null,
+        ["show", "Hiện tất cả", "U", anyHidden], ["clear", "Bỏ chọn", "Esc", has], ["fit", "Toàn cảnh", "F", true],
+      ];
+      this._menu.innerHTML = items.map((it) => it ? `<button data-a="${it[0]}" ${it[3] ? "" : "disabled"}><span>${it[1]}</span><kbd>${it[2]}</kbd></button>` : "<hr>").join("");
+      const r = this.c.getBoundingClientRect();
+      Object.assign(this._menu.style, { display: "block", left: Math.min(e.clientX - r.left, r.width - 230) + "px", top: Math.min(e.clientY - r.top, r.height - 330) + "px" });
+      this._menu.querySelectorAll("button").forEach((b) => (b.onclick = () => {
+        this._hideMenu();
+        ({ zoom: () => this.zoomSelection(), hide: () => this.hideSelected(), iso: () => this.isolateSelected(),
+           others: () => this.hideOthers(), sameClass: () => this.selectSame("class"), sameFile: () => this.selectSame("file"),
+           box: () => { this.setBoxMode(!this.boxMode); if (this.opts.onBoxMode) this.opts.onBoxMode(this.boxMode); },
+           show: () => this.unhideAll(), clear: () => this.clearSelection(true), fit: () => this.fitAll() })[b.dataset.a]();
+      }));
     }
 
     _legend() {
@@ -695,6 +826,13 @@
   .ttv-info ul{margin:6px 0 0 16px;padding:0}.ttv-info li{margin:2px 0;color:#9b1c1c}
   .ttv-info hr{border:0;border-top:1px solid #e2e8f0;margin:6px 0}
   .ttv-x{float:right;cursor:pointer;color:#64748b}
+  .ttv-box{position:absolute;display:none;border:1.5px dashed #1a73ff;background:rgba(26,115,255,.08);pointer-events:none;z-index:5}
+  .ttv-menu{position:absolute;display:none;z-index:20;min-width:220px;background:#fff;border:1px solid #cfd6df;border-radius:8px;box-shadow:0 6px 24px rgba(0,0,0,.18);padding:4px}
+  .ttv-menu button{display:flex;width:100%;justify-content:space-between;gap:16px;border:0;background:none;padding:6px 10px;border-radius:5px;cursor:pointer;font:inherit;color:inherit;text-align:left}
+  .ttv-menu button:hover:not(:disabled){background:#eef3fb}
+  .ttv-menu button:disabled{color:#a0aab8;cursor:default}
+  .ttv-menu kbd{color:#7a8798;font:11px/1.6 inherit}
+  .ttv-menu hr{border:0;border-top:1px solid #e6ebf1;margin:3px 0}
   .ttv-sw{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
   .ttv-k{color:#64748b;font-size:11px;word-break:break-all}
   .st2{color:#c0392b}.st1{color:#b7791f}.st0{color:#2f855a}

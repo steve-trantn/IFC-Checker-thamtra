@@ -77,7 +77,11 @@ async function init() {
   $("#ttv-css").textContent = ThamTraViewer.CSS;
   // chiều cao bảng dưới theo màn hình: ~30% (laptop) để khung 3D đủ lớn
   document.documentElement.style.setProperty("--dock-h", Math.max(150, Math.min(340, Math.round(window.innerHeight * 0.3))) + "px");
-  S.viewer = new ThamTraViewer($("#viewer"), { onPick: (p) => onPick(p) });
+  S.viewer = new ThamTraViewer($("#viewer"), {
+    onPick: (p) => onPick(p),
+    onSelect: (ids) => onSelectChange(ids),
+    onBoxMode: (on) => $("#btnBox").classList.toggle("active", on),
+  });
   bindUI();
   await refreshState();
   if (S.state.models.length) { await loadScene(); }
@@ -109,7 +113,11 @@ function bindUI() {
   $("#btnClash").onclick = runClash;
   $("#btnColor").onclick = () => { S.viewer.setColorMode("status"); toast("Đỏ = lỗi · Vàng = cảnh báo · Xanh = đạt"); };
   $("#btnIsoFail").onclick = isolateFailing;
-  $("#btnShowAll").onclick = () => { S.viewer.clearIsolate(); S.viewer.clearSelection(); };
+  $("#btnShowAll").onclick = () => { S.viewer.unhideAll(); S.viewer.fitAll(); };
+  $("#btnBox").onclick = () => { S.viewer.setBoxMode(!S.viewer.boxMode); $("#btnBox").classList.toggle("active", S.viewer.boxMode); };
+  $("#btnHide").onclick = () => needSel() && S.viewer.hideSelected();
+  $("#btnIsoSel").onclick = () => needSel() && S.viewer.isolateSelected();
+  $("#btnHideOthers").onclick = () => needSel() && S.viewer.hideOthers();
   $("#btnFit").onclick = () => { S.viewer.resize(); S.viewer.fitAll(); };
   $("#btnAI").onclick = () => toggleAI();
   $("#aiClose").onclick = () => toggleAI(false);
@@ -157,6 +165,27 @@ async function loadScene() {
 }
 
 // ====================================================================== chọn đối tượng
+function needSel() {
+  if (S.viewer.getSelection().length) return true;
+  toast("Chưa chọn đối tượng nào - nháy vào mô hình (Ctrl để chọn thêm) hoặc dùng Chọn vùng");
+  return false;
+}
+function onSelectChange(ids) {
+  if (ids.length > 1) {
+    const refs = S.viewer.refsOf(ids);
+    S.aiListCard = { title: "Đối tượng đang chọn", count: ids.length, refs, kind: "selection" };
+    const meta = S.viewer.meta, by = {};
+    for (const i of ids) { const c = meta.classes[meta.objects[i][3]]; by[c] = (by[c] || 0) + 1; }
+    $("#props").innerHTML = `<div class="pad"><b>${fmt(ids.length)} đối tượng đang chọn</b></div><table class="kv">` +
+      Object.entries(by).sort((a, b) => b[1] - a[1]).map(([c, n]) => `<tr><td>${esc(c)}</td><td>${fmt(n)}</td></tr>`).join("") +
+      `</table><div class="pad"><button class="btn small" id="selList">☰ Xem danh sách</button></div>`;
+    $("#selList").onclick = () => showTab("ailist");
+    if (S.tab === "ailist") renderTab();
+  } else if (!ids.length && S.aiListCard && S.aiListCard.kind === "selection") {
+    S.aiListCard = null;
+    if (S.tab === "ailist") renderTab();
+  }
+}
 function onPick(p) {
   showProps(p.file, p.step);
   markRows(p.file, p.step);
@@ -461,7 +490,7 @@ async function tabInventory(el) {
 }
 async function tabAIList(el) {
   const c = S.aiListCard;
-  if (!c) { el.innerHTML = '<div class="pad muted">Bấm "Danh sách" trên thẻ kết quả của trợ lý AI để xem danh sách đối tượng ở đây.</div>'; return; }
+  if (!c) { el.innerHTML = '<div class="pad muted">Chọn nhiều đối tượng trong 3D (Ctrl + nháy, Chọn vùng, chuột phải → Chọn cùng lớp IFC) hoặc bấm "Danh sách" trên thẻ của trợ lý AI để xem danh sách ở đây.</div>'; return; }
   const meta = S.viewer.meta;
   const fidx = meta ? new Map(meta.files.map((f, i) => [f, i])) : new Map();
   const rows = c.refs.slice(0, 3000).map(([f, st]) => {
@@ -469,10 +498,11 @@ async function tabAIList(el) {
     const o = oi != null ? meta.objects[oi] : null;
     return `<tr class="click" data-file="${esc(f)}" data-step="${st}"><td>${o ? esc(meta.classes[o[3]]) : ""}</td><td>${o ? esc(o[4]) : "#" + st}</td><td class="muted small">${esc(shortName(f))}</td><td class="n">${st}</td></tr>`;
   }).join("");
-  el.innerHTML = `<div class="tb"><b>${esc(c.title)}</b><span class="muted">${fmt(c.count)} đối tượng</span><span class="grow"></span><button class="btn small" id="alIso">🔎 Cô lập</button><button class="btn small" id="alHl">✨ Highlight 3D</button></div>
+  el.innerHTML = `<div class="tb"><b>${esc(c.title)}</b><span class="muted">${fmt(c.count)} đối tượng</span><span class="grow"></span><button class="btn small" id="alIso">🔎 Cô lập</button><button class="btn small" id="alHl">✨ Highlight 3D</button><button class="btn small" id="alHide">🙈 Ẩn</button></div>
     <div class="scroll"><table class="grid"><tr><th>Lớp IFC</th><th>Tên</th><th>File</th><th>#</th></tr>${rows}</table></div>`;
   $("#alIso").onclick = () => focusRefs(c.refs, { isolate: true });
   $("#alHl").onclick = () => focusRefs(c.refs);
+  $("#alHide").onclick = () => { S.viewer.hide(S.viewer.resolve(c.refs)); S.viewer.clearSelection(true); };
   $$("tr[data-step]", el).forEach((tr) => (tr.onclick = () => { focusRefs([[tr.dataset.file, +tr.dataset.step]]); showProps(tr.dataset.file, +tr.dataset.step); }));
 }
 async function tabLog(el) {
